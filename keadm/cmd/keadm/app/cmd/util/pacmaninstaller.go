@@ -60,12 +60,12 @@ func (o *PacmanOS) InstallKubeEdge(options types.InstallOptions) error {
 // RunEdgeCore sets the environment variable GOARCHAIUS_CONFIG_PATH for the configuration path
 // and the starts edgecore with logs being captured
 func (o *PacmanOS) RunEdgeCore() error {
-	return runEdgeCore(o.KubeEdgeVersion)
+	return runEdgeCore()
 }
 
 // KillKubeEdgeBinary will search for KubeEdge process and forcefully kill it
 func (o *PacmanOS) KillKubeEdgeBinary(proc string) error {
-	return killKubeEdgeBinary(proc)
+	return KillKubeEdgeBinary(proc)
 }
 
 // IsKubeEdgeProcessRunning checks if the given process is running or not

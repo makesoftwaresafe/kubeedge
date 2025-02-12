@@ -12,6 +12,9 @@ import (
 	clientgov1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
+	routerv1 "github.com/kubeedge/api/apis/rules/v1"
+	crdinformers "github.com/kubeedge/api/client/informers/externalversions"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
@@ -20,9 +23,7 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/manager"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
-	routerv1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
-	crdinformers "github.com/kubeedge/kubeedge/pkg/client/informers/externalversions"
+	commonconstants "github.com/kubeedge/kubeedge/common/constants"
 )
 
 // DownstreamController watch kubernetes api server and send change to edge
@@ -39,17 +40,11 @@ type DownstreamController struct {
 
 	nodeManager *manager.NodesManager
 
-	serviceManager *manager.ServiceManager
-
-	endpointsManager *manager.EndpointsManager
-
 	rulesManager *manager.RuleManager
 
 	ruleEndpointsManager *manager.RuleEndpointManager
 
 	lc *manager.LocationCache
-
-	svcLister clientgov1.ServiceLister
 
 	podLister clientgov1.PodLister
 }
@@ -360,7 +355,7 @@ func (dc *DownstreamController) Start() error {
 
 // initLocating to know configmap and secret should send to which nodes
 func (dc *DownstreamController) initLocating() error {
-	set := labels.Set{manager.NodeRoleKey: manager.NodeRoleValue}
+	set := labels.Set{commonconstants.EdgeNodeRoleKey: commonconstants.EdgeNodeRoleValue}
 	selector := labels.SelectorFromSet(set)
 	nodes, err := dc.kubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: selector.String()})
 	if err != nil {
@@ -415,20 +410,6 @@ func NewDownstreamController(config *v1alpha1.EdgeController, k8sInformerFactory
 		return nil, err
 	}
 
-	svcInformer := k8sInformerFactory.Core().V1().Services()
-	serviceManager, err := manager.NewServiceManager(config, svcInformer.Informer())
-	if err != nil {
-		klog.Warningf("Create service manager failed with error: %s", err)
-		return nil, err
-	}
-
-	endpointsInformer := k8sInformerFactory.Core().V1().Endpoints()
-	endpointsManager, err := manager.NewEndpointsManager(config, endpointsInformer.Informer())
-	if err != nil {
-		klog.Warningf("Create endpoints manager failed with error: %s", err)
-		return nil, err
-	}
-
 	rulesInformer := crdInformerFactory.Rules().V1().Rules().Informer()
 	rulesManager, err := manager.NewRuleManager(config, rulesInformer)
 	if err != nil {
@@ -449,11 +430,8 @@ func NewDownstreamController(config *v1alpha1.EdgeController, k8sInformerFactory
 		configmapManager:     configMapManager,
 		secretManager:        secretManager,
 		nodeManager:          nodesManager,
-		serviceManager:       serviceManager,
-		endpointsManager:     endpointsManager,
 		messageLayer:         messagelayer.EdgeControllerMessageLayer(),
 		lc:                   lc,
-		svcLister:            svcInformer.Lister(),
 		podLister:            podInformer.Lister(),
 		rulesManager:         rulesManager,
 		ruleEndpointsManager: ruleEndpointsManager,

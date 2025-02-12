@@ -5,9 +5,8 @@ import (
 	"sync"
 
 	"k8s.io/apimachinery/pkg/api/meta"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/apiserver/pkg/storage/etcd3"
+	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
@@ -47,6 +46,7 @@ func Trigger(e watch.Event) {
 		return
 	}
 	gvr, ns, name := metaserver.ParseKey(key)
+	//TODO why not lock hooks ?
 	for _, hook := range hooks {
 		compGVR, compNS, compName, compRev := true, true, true, true
 		if !hook.GetGVR().Empty() {
@@ -64,7 +64,7 @@ func Trigger(e watch.Event) {
 				klog.Errorf("failed to get accessor, %v", err)
 				return
 			}
-			rev, err := etcd3.Versioner.ParseResourceVersion(accessor.GetResourceVersion())
+			rev, err := storage.APIObjectVersioner{}.ParseResourceVersion(accessor.GetResourceVersion())
 			if err != nil {
 				klog.Errorf("failed to parse resource version, %v", err)
 				return
@@ -72,7 +72,11 @@ func Trigger(e watch.Event) {
 			compRev = hook.GetResourceVersion() < rev
 		}
 		if compGVR && compNS && compName && compRev {
-			utilruntime.Must(hook.Do(e))
+			err = hook.Do(e)
+			if err != nil {
+				klog.Errorf("failed to operate event, %v", err)
+				return
+			}
 		}
 	}
 }

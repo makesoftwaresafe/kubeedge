@@ -3,16 +3,16 @@ package devicetwin
 import (
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	deviceconfig "github.com/kubeedge/kubeedge/edge/pkg/devicetwin/config"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtclient"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtcontext"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtmodule"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
-//DeviceTwin the module
+// DeviceTwin the module
 type DeviceTwin struct {
 	HeartBeatToModule map[string]chan interface{}
 	DTContexts        *dtcontext.DTContext
@@ -31,7 +31,7 @@ func newDeviceTwin(enable bool) *DeviceTwin {
 }
 
 // Register register devicetwin
-func Register(deviceTwin *v1alpha1.DeviceTwin, nodeName string) {
+func Register(deviceTwin *v1alpha2.DeviceTwin, nodeName string) {
 	deviceconfig.InitConfigure(deviceTwin, nodeName)
 	dt := newDeviceTwin(deviceTwin.Enable)
 	dtclient.InitDBTable(dt)

@@ -1,8 +1,11 @@
 package util
 
 import (
+	"context"
 	"strings"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
@@ -13,10 +16,6 @@ import (
 	"k8s.io/klog/v2"
 
 	beehiveModel "github.com/kubeedge/beehive/pkg/core/model"
-)
-
-const (
-	EmptyString = ""
 )
 
 // MetaType is generally consisted of apiversion, kind like:
@@ -37,7 +36,7 @@ func SetMetaType(obj runtime.Object) error {
 	}
 	gvk := kinds[0]
 	obj.GetObjectKind().SetGroupVersionKind(gvk)
-	klog.V(4).Infof("[metaserver]successfully set MetaType for obj %v, %+v", obj.GetObjectKind(), accessor.GetName())
+	klog.V(6).Infof("[metaserver]successfully set MetaType for obj %v, %+v", obj.GetObjectKind(), accessor.GetName())
 	return nil
 }
 
@@ -52,6 +51,7 @@ func UnsafeResourceToKind(r string) string {
 		"endpoints":                    "Endpoints",
 		"endpointslices":               "EndpointSlice",
 		"nodes":                        "Node",
+		"namespaces":                   "Namespace",
 		"services":                     "Service",
 		"podstatus":                    "PodStatus",
 		"nodestatus":                   "NodeStatus",
@@ -61,11 +61,12 @@ func UnsafeResourceToKind(r string) string {
 	if v, isUnusual := unusualResourceToKind[r]; isUnusual {
 		return v
 	}
-	k := strings.Title(r)
+	caser := cases.Title(language.Und)
+	k := caser.String(r)
 	switch {
 	case strings.HasSuffix(k, "ies"):
 		return strings.TrimSuffix(k, "ies") + "y"
-	case strings.HasSuffix(k, "es"):
+	case strings.HasSuffix(k, "ses"):
 		return strings.TrimSuffix(k, "es")
 	case strings.HasSuffix(k, "s"):
 		return strings.TrimSuffix(k, "s")
@@ -141,4 +142,28 @@ func GetMessageResourceType(msg *beehiveModel.Message) string {
 		return obj.GetObjectKind().GroupVersionKind().Kind
 	}
 	return ""
+}
+
+type key int
+
+const (
+	// applicationKey is the context key for the application.
+	applicationIDKey key = iota
+)
+
+// WithApplicationID returns a copy of parent in which the applicationID value is set
+func WithApplicationID(parent context.Context, appID string) context.Context {
+	return context.WithValue(parent, applicationIDKey, appID)
+}
+
+// ApplicationIDFrom returns the value of the ApplicationID key on the ctx
+func ApplicationIDFrom(ctx context.Context) (string, bool) {
+	applicationID, ok := ctx.Value(applicationIDKey).(string)
+	return applicationID, ok
+}
+
+// ApplicationIDValue returns the value of the applicationID key on the ctx, or the empty string if none
+func ApplicationIDValue(ctx context.Context) string {
+	applicationID, _ := ApplicationIDFrom(ctx)
+	return applicationID
 }

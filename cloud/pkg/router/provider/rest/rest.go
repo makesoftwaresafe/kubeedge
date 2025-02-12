@@ -13,13 +13,13 @@ import (
 
 	"k8s.io/klog/v2"
 
+	v1 "github.com/kubeedge/api/apis/rules/v1"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/listener"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/provider"
 	httpUtils "github.com/kubeedge/kubeedge/cloud/pkg/router/utils/http"
 	commonType "github.com/kubeedge/kubeedge/common/types"
-	v1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
 )
 
 var inited int32
@@ -142,21 +142,21 @@ func (r *Rest) Forward(target provider.Target, data interface{}) (interface{}, e
 		} else {
 			msg, ok := resp.(*model.Message)
 			if !ok {
-				klog.Error("response can not convert to Message")
+				klog.Error("response is not message type")
 				httpResponse.StatusCode = http.StatusInternalServerError
 				httpResponse.Body = io.NopCloser(strings.NewReader("invalid response"))
 				return httpResponse, nil
 			}
-			content, err := json.Marshal(msg.GetContent())
+			content, err := msg.GetContentData()
 			if err != nil {
-				klog.Error("message content can not convert to json")
+				klog.Errorf("get message %s data err: %v", msg.GetID(), err)
 				httpResponse.StatusCode = http.StatusInternalServerError
 				httpResponse.Body = io.NopCloser(strings.NewReader("invalid response"))
 				return httpResponse, nil
 			}
 			var response commonType.HTTPResponse
 			if err := json.Unmarshal(content, &response); err != nil {
-				klog.Error("message content can not convert to HTTPResponse")
+				klog.Errorf("message %s content can not convert to HTTPResponse: %v", msg.GetID(), err)
 				httpResponse.StatusCode = http.StatusInternalServerError
 				httpResponse.Body = io.NopCloser(strings.NewReader("invalid response"))
 				return httpResponse, nil
@@ -191,7 +191,7 @@ func (r *Rest) Forward(target provider.Target, data interface{}) (interface{}, e
 	return httpResponse, nil
 }
 
-func (r *Rest) GoToTarget(data map[string]interface{}, stop chan struct{}) (interface{}, error) {
+func (r *Rest) GoToTarget(data map[string]interface{}, _ chan struct{}) (interface{}, error) {
 	//TODO: need to get ACK
 	v, exist := data["data"]
 	if !exist {
@@ -201,7 +201,12 @@ func (r *Rest) GoToTarget(data map[string]interface{}, stop chan struct{}) (inte
 	if !ok || len(content) == 0 {
 		return nil, errors.New("invalid convert to []byte")
 	}
-	req, err := httpUtils.BuildRequest(http.MethodPost, r.Endpoint, bytes.NewReader(content), "", "")
+	nodeName, ok := data["nodeName"].(string)
+	if !ok {
+		err := fmt.Errorf("input data does not exist valid value \"nodeName\"")
+		klog.Warningf(err.Error())
+	}
+	req, err := httpUtils.BuildRequest(http.MethodPost, r.Endpoint, bytes.NewReader(content), "", nodeName)
 	if err != nil {
 		return nil, err
 	}

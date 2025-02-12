@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package cmd
+package edge
 
 import (
 	"fmt"
@@ -27,10 +27,10 @@ import (
 )
 
 func request(opt *common.JoinOptions, step *common.Step) error {
-	imageSet := image.EdgeSet(opt.ImageRepository, opt.KubeEdgeVersion)
+	imageSet := image.EdgeSet(opt)
 	images := imageSet.List()
 
-	runtime, err := util.NewContainerRuntime(opt.RuntimeType, opt.RemoteRuntimeEndpoint)
+	runtime, err := util.NewContainerRuntime(opt.RemoteRuntimeEndpoint, opt.CGroupDriver)
 	if err != nil {
 		return err
 	}
@@ -41,13 +41,10 @@ func request(opt *common.JoinOptions, step *common.Step) error {
 	}
 
 	step.Printf("Copy resources from the image to the management directory")
-	dirs := map[string]string{
-		util.KubeEdgePath: filepath.Join(util.KubeEdgeTmpPath, "data"),
-	}
 	files := map[string]string{
-		filepath.Join(util.KubeEdgeUsrBinPath, util.KubeEdgeBinaryName): filepath.Join(util.KubeEdgeTmpPath, "bin", util.KubeEdgeBinaryName),
+		filepath.Join(util.KubeEdgeUsrBinPath, util.KubeEdgeBinaryName): filepath.Join(util.KubeEdgeUsrBinPath, util.KubeEdgeBinaryName),
 	}
-	if err := runtime.CopyResources(imageSet.Get(image.EdgeCore), dirs, files); err != nil {
+	if err := runtime.CopyResources(imageSet.Get(image.EdgeCore), files); err != nil {
 		return fmt.Errorf("copy resources failed: %v", err)
 	}
 
@@ -55,9 +52,6 @@ func request(opt *common.JoinOptions, step *common.Step) error {
 		step.Printf("Start the default mqtt service")
 		if err := createMQTTConfigFile(); err != nil {
 			return fmt.Errorf("create MQTT config file failed: %v", err)
-		}
-		if err := runtime.RunMQTT(imageSet.Get(image.EdgeMQTT)); err != nil {
-			return fmt.Errorf("run MQTT failed: %v", err)
 		}
 	}
 	return nil

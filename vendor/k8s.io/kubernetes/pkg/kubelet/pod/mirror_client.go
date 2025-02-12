@@ -143,7 +143,8 @@ func (mc *basicMirrorClient) DeleteMirrorPod(podFullName string, uid *types.UID)
 }
 
 func (mc *basicMirrorClient) getNodeUID() (types.UID, error) {
-	node, err := mc.nodeGetter.Get(mc.nodeName)
+	//node, err := mc.nodeGetter.Get(mc.nodeName)
+	node, err := mc.apiserverClient.CoreV1().Nodes().Get(context.Background(), mc.nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -151,12 +152,6 @@ func (mc *basicMirrorClient) getNodeUID() (types.UID, error) {
 		return "", fmt.Errorf("UID unset for node %s", mc.nodeName)
 	}
 	return node.UID, nil
-}
-
-// IsStaticPod returns true if the passed Pod is static.
-func IsStaticPod(pod *v1.Pod) bool {
-	source, err := kubetypes.GetPodSource(pod)
-	return err == nil && source != kubetypes.ApiserverSource
 }
 
 func getHashFromMirrorPod(pod *v1.Pod) (string, bool) {

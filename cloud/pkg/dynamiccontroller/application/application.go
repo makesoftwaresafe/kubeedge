@@ -2,442 +2,93 @@ package application
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"sync"
-	"time"
+	"strings"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
-	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 
-	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
+	utilcontext "github.com/kubeedge/kubeedge/cloud/pkg/common/context"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
+	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/filter"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
-	edgemodule "github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	metaserverconfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/config"
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
+	"github.com/kubeedge/kubeedge/pkg/util/pass-through"
 )
-
-// used to set Message.Route
-const (
-	MetaServerSource    = "metaserver"
-	ApplicationResource = "Application"
-	ApplicationResp     = "applicationResponse"
-	Ignore              = "ignore"
-)
-
-type applicationStatus string
-
-const (
-	// set by agent
-	PreApplying applicationStatus = "PreApplying" // application is waiting to be sent to cloud
-	InApplying  applicationStatus = "InApplying"  // application is sending to cloud
-
-	// set by center
-	InProcessing applicationStatus = "InProcessing" // application is in processing by cloud
-	Approved     applicationStatus = "Approved"     // application is approved by cloud
-	Rejected     applicationStatus = "Rejected"     // application is rejected by cloud
-
-	// both
-	Failed    applicationStatus = "Failed"    // failed to get application resp from cloud
-	Completed applicationStatus = "Completed" // application is completed and waiting to be recycled
-)
-
-type applicationVerb string
-
-const (
-	Get          applicationVerb = "get"
-	List         applicationVerb = "list"
-	Watch        applicationVerb = "watch"
-	Create       applicationVerb = "create"
-	Delete       applicationVerb = "delete"
-	Update       applicationVerb = "update"
-	UpdateStatus applicationVerb = "updatestatus"
-	Patch        applicationVerb = "patch"
-)
-
-type PatchInfo struct {
-	Name         string
-	PatchType    types.PatchType
-	Data         []byte
-	Options      metav1.PatchOptions
-	Subresources []string
-}
-
-// record the resources that are in applying for requesting to be transferred down from the cloud, please:
-// 0.use Agent.Generate to generate application
-// 1.use Agent.Apply to apply application( generate msg and send it to cloud dynamiccontroller)
-type Application struct {
-	ID          string
-	Key         string // group version resource namespaces name
-	Verb        applicationVerb
-	Nodename    string
-	Status      applicationStatus
-	Reason      string // why in this status
-	Option      []byte //
-	ReqBody     []byte // better a k8s api instance
-	RespBody    []byte
-	Subresource string
-	Error       apierrors.StatusError
-
-	ctx    context.Context // to end app.Wait
-	cancel context.CancelFunc
-
-	count     uint64 // count the number of current citations
-	countLock sync.Mutex
-	timestamp time.Time // record the last closing time of application, only make sense when count == 0
-}
-
-func newApplication(ctx context.Context, key string, verb applicationVerb, nodename, subresource string, option interface{}, reqBody interface{}) *Application {
-	var v1 metav1.ListOptions
-	if internal, ok := option.(metainternalversion.ListOptions); ok {
-		err := metainternalversion.Convert_internalversion_ListOptions_To_v1_ListOptions(&internal, &v1, nil)
-		if err != nil {
-			// error here won't happen, log in case
-			klog.Errorf("failed to transfer internalListOption to v1ListOption, force set to empty")
-		}
-		option = v1
-	}
-	ctx2, cancel := context.WithCancel(ctx)
-	app := &Application{
-		Key:         key,
-		Verb:        verb,
-		Nodename:    nodename,
-		Subresource: subresource,
-		Status:      PreApplying,
-		Option:      toBytes(option),
-		ReqBody:     toBytes(reqBody),
-		ctx:         ctx2,
-		cancel:      cancel,
-		count:       0,
-		countLock:   sync.Mutex{},
-		timestamp:   time.Time{},
-	}
-	app.add()
-	return app
-}
-
-func (a *Application) Identifier() string {
-	if a.ID != "" {
-		return a.ID
-	}
-	b := []byte(a.Nodename)
-	b = append(b, []byte(a.Key)...)
-	b = append(b, []byte(a.Verb)...)
-	b = append(b, a.Option...)
-	b = append(b, a.ReqBody...)
-	a.ID = fmt.Sprintf("%x", md5.Sum(b))
-	return a.ID
-}
-func (a *Application) String() string {
-	return fmt.Sprintf("(NodeName=%v;Key=%v;Verb=%v;Status=%v;Reason=%v)", a.Nodename, a.Key, a.Verb, a.Status, a.Reason)
-}
-func (a *Application) ReqContent() interface{} {
-	return a.ReqBody
-}
-func (a *Application) RespContent() interface{} {
-	return a.RespBody
-}
-
-func (a *Application) ToListener(option metav1.ListOptions) *SelectorListener {
-	gvr, namespace, _ := metaserver.ParseKey(a.Key)
-	selector := NewSelector(option.LabelSelector, option.FieldSelector)
-	if namespace != "" {
-		selector.Field = fields.AndSelectors(selector.Field, fields.OneTermEqualSelector("metadata.namespace", namespace))
-	}
-	l := NewSelectorListener(a.Nodename, gvr, selector)
-	return l
-}
-
-// remember i must be a pointer to the initialized variable
-func (a *Application) OptionTo(i interface{}) error {
-	err := json.Unmarshal(a.Option, i)
-	if err != nil {
-		return fmt.Errorf("failed to prase Option bytes, %v", err)
-	}
-	return nil
-}
-
-func (a *Application) ReqBodyTo(i interface{}) error {
-	err := json.Unmarshal(a.ReqBody, i)
-	if err != nil {
-		return fmt.Errorf("failed to parse ReqBody bytes, %v", err)
-	}
-	return nil
-}
-
-func (a *Application) RespBodyTo(i interface{}) error {
-	err := json.Unmarshal(a.RespBody, i)
-	if err != nil {
-		return fmt.Errorf("failed to parse RespBody bytes, %v", err)
-	}
-	return nil
-}
-
-//
-func (a *Application) GVR() schema.GroupVersionResource {
-	gvr, _, _ := metaserver.ParseKey(a.Key)
-	return gvr
-}
-func (a *Application) Namespace() string {
-	_, ns, _ := metaserver.ParseKey(a.Key)
-	return ns
-}
-
-func (a *Application) Call() {
-	if a.cancel != nil {
-		a.cancel()
-	}
-}
-
-func (a *Application) getStatus() applicationStatus {
-	return a.Status
-}
-
-// Wait the result of application after it is applied by application agent
-func (a *Application) Wait() {
-	if a.ctx != nil {
-		<-a.ctx.Done()
-	}
-}
-
-func (a *Application) Reset() {
-	if a.ctx != nil && a.cancel != nil {
-		a.cancel()
-	}
-	a.ctx, a.cancel = context.WithCancel(beehiveContext.GetContext())
-	a.Reason = ""
-	a.RespBody = []byte{}
-}
-
-func (a *Application) add() {
-	a.countLock.Lock()
-	a.count++
-	a.countLock.Unlock()
-}
-
-func (a *Application) getCount() uint64 {
-	a.countLock.Lock()
-	c := a.count
-	a.countLock.Unlock()
-	return c
-}
-
-// Close must be called when applicant no longer using application
-func (a *Application) Close() {
-	a.countLock.Lock()
-	defer a.countLock.Unlock()
-	if a.count == 0 {
-		return
-	}
-
-	a.timestamp = time.Now()
-	a.count--
-	if a.count == 0 {
-		a.Status = Completed
-	}
-}
-
-func (a *Application) LastCloseTime() time.Time {
-	a.countLock.Lock()
-	defer a.countLock.Unlock()
-	if a.count == 0 && !a.timestamp.IsZero() {
-		return a.timestamp
-	}
-	return time.Time{}
-}
-
-// used for generating application and do apply
-type Agent struct {
-	Applications sync.Map //store struct application
-	nodeName     string
-}
-
-// edged config.Config.HostnameOverride
-func NewApplicationAgent() *Agent {
-	defaultAgent := &Agent{nodeName: metaserverconfig.Config.NodeName}
-
-	go wait.Until(func() {
-		defaultAgent.GC()
-	}, time.Minute*5, beehiveContext.Done())
-
-	return defaultAgent
-}
-
-func (a *Agent) Generate(ctx context.Context, verb applicationVerb, option interface{}, obj runtime.Object) *Application {
-	key, err := metaserver.KeyFuncReq(ctx, "")
-	if err != nil {
-		klog.Errorf("%v", err)
-		return &Application{}
-	}
-
-	info, ok := apirequest.RequestInfoFrom(ctx)
-	if !ok || !info.IsResourceRequest {
-		klog.Errorf("no request info in context")
-		return &Application{}
-	}
-
-	app := newApplication(ctx, key, verb, a.nodeName, info.Subresource, option, obj)
-	store, ok := a.Applications.LoadOrStore(app.Identifier(), app)
-	if ok {
-		app = store.(*Application)
-		app.add()
-		return app
-	}
-	return app
-}
-
-func (a *Agent) Apply(app *Application) error {
-	store, ok := a.Applications.Load(app.Identifier())
-	if !ok {
-		return fmt.Errorf("application %v has not been registered to agent", app.String())
-	}
-	app = store.(*Application)
-	switch app.getStatus() {
-	case PreApplying:
-		go a.doApply(app)
-	case Completed:
-		app.Reset()
-		go a.doApply(app)
-	case Rejected:
-		return &app.Error
-	case Failed:
-		return errors.New(app.Reason)
-	case Approved:
-		return nil
-	case InApplying:
-		//continue
-	}
-	app.Wait()
-	if app.getStatus() == Rejected {
-		return &app.Error
-	}
-	if app.getStatus() != Approved {
-		return errors.New(app.Reason)
-	}
-	return nil
-}
-
-func (a *Agent) doApply(app *Application) {
-	defer app.Call()
-
-	// encapsulate as a message
-	app.Status = InApplying
-	msg := model.NewMessage("").SetRoute(MetaServerSource, modules.DynamicControllerModuleGroup).FillBody(app)
-	msg.SetResourceOperation("null", "null")
-	resp, err := beehiveContext.SendSync(edgemodule.EdgeHubModuleName, *msg, 10*time.Second)
-	if err != nil {
-		app.Status = Failed
-		app.Reason = fmt.Sprintf("failed to access cloud Application center: %v", err)
-		return
-	}
-
-	retApp, err := msgToApplication(resp)
-	if err != nil {
-		app.Status = Failed
-		app.Reason = fmt.Sprintf("failed to get Application from resp msg: %v", err)
-		return
-	}
-
-	//merge returned application to local application
-	app.Status = retApp.Status
-	app.Reason = retApp.Reason
-	app.Error = retApp.Error
-	app.RespBody = retApp.RespBody
-}
-
-func (a *Agent) GC() {
-	a.Applications.Range(func(key, value interface{}) bool {
-		app := value.(*Application)
-		lastCloseTime := app.LastCloseTime()
-		if !lastCloseTime.IsZero() && time.Since(lastCloseTime) >= time.Minute*5 {
-			a.Applications.Delete(key)
-		}
-		return true
-	})
-}
 
 type Center struct {
-	Applications sync.Map
 	HandlerCenter
-	messageLayer messagelayer.MessageLayer
-	kubeclient   dynamic.Interface
+	messageLayer  messagelayer.MessageLayer
+	dynamicClient dynamic.Interface
+	kubeClient    kubernetes.Interface
 }
 
 func NewApplicationCenter(dynamicSharedInformerFactory dynamicinformer.DynamicSharedInformerFactory) *Center {
 	a := &Center{
 		HandlerCenter: NewHandlerCenter(dynamicSharedInformerFactory),
-		kubeclient:    client.GetDynamicClient(),
+		dynamicClient: client.GetDynamicClient(),
+		kubeClient:    client.GetKubeClient(),
 		messageLayer:  messagelayer.DynamicControllerMessageLayer(),
 	}
 	return a
 }
 
-func toBytes(i interface{}) (bytes []byte) {
-	if i == nil {
-		return
-	}
-
-	if bytes, ok := i.([]byte); ok {
-		return bytes
-	}
-
-	var err error
-	if bytes, err = json.Marshal(i); err != nil {
-		klog.Errorf("marshal content to []byte failed, err: %v", err)
-	}
-	return
-}
-
-// extract application in message's Content
-func msgToApplication(msg model.Message) (*Application, error) {
-	var app = new(Application)
-	contentData, err := msg.GetContentData()
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(contentData, app)
-	if err != nil {
-		return nil, err
-	}
-	return app, nil
-}
-
 // Process translate msg to application , process and send resp to edge
 // TODO: upgrade to parallel process
 func (c *Center) Process(msg model.Message) {
-	app, err := msgToApplication(msg)
+	if strings.HasSuffix(msg.GetResource(), metaserver.WatchAppSync) {
+		if err := c.ProcessWatchSync(msg); err != nil {
+			klog.Errorf("failed to ProcessWatchSync: %v", err)
+		}
+		return
+	}
+
+	app, err := metaserver.MsgToApplication(msg)
 	if err != nil {
 		klog.Errorf("failed to translate msg to Application: %v", err)
 		return
 	}
+
 	klog.Infof("[metaserver/ApplicationCenter] get a Application %v", app.String())
+
+	if config.Config.EnableAuthorization {
+		nodeID, err := messagelayer.GetNodeID(msg)
+		if err != nil || nodeID != app.Nodename {
+			klog.Errorf("[metaserver/authorization]failed to process Application(%+v), %v", app, err)
+			return
+		}
+	}
+
+	if passthrough.IsPassThroughPath(app.Key, string(app.Verb)) {
+		resp, err := c.passThroughRequest(app)
+		if err != nil {
+			c.Response(app, msg.GetID(), metaserver.Rejected, err, nil)
+			klog.Errorf("[metaserver/passThrough]failed to process Application(%+v), %v", app, err)
+			return
+		}
+		c.Response(app, msg.GetID(), metaserver.Approved, nil, resp)
+		return
+	}
 
 	resp, err := c.ProcessApplication(app)
 	if err != nil {
-		c.Response(app, msg.GetID(), Rejected, err, nil)
+		c.Response(app, msg.GetID(), metaserver.Rejected, err, nil)
 		klog.Errorf("[metaserver/applicationCenter]failed to process Application(%+v), %v", app, err)
 		return
 	}
-	c.Response(app, msg.GetID(), Approved, nil, resp)
+	c.Response(app, msg.GetID(), metaserver.Approved, nil, resp)
 	klog.Infof("[metaserver/applicationCenter]successfully to process Application(%+v)", app)
 }
 
@@ -446,41 +97,45 @@ func (c *Center) Process(msg model.Message) {
 // Specially if app.verb == watch, it transforms app to a listener and register it to HandlerCenter, rather
 // than request to apiserver directly. Listener will then continuously listen kube-api change events and
 // push them to edge node.
-func (c *Center) ProcessApplication(app *Application) (interface{}, error) {
-	app.Status = InProcessing
-
+func (c *Center) ProcessApplication(app *metaserver.Application) (interface{}, error) {
+	app.Status = metaserver.InProcessing
 	gvr, ns, name := metaserver.ParseKey(app.Key)
+
 	switch app.Verb {
-	case List:
+	case metaserver.List:
 		var option = new(metav1.ListOptions)
 		if err := app.OptionTo(option); err != nil {
 			return nil, err
 		}
-		list, err := c.kubeclient.Resource(app.GVR()).Namespace(app.Namespace()).List(context.TODO(), *option)
+		list, err := c.dynamicClient.Resource(gvr).Namespace(ns).List(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), *option)
 		if err != nil {
-			return nil, fmt.Errorf("successfully to add listener but failed to get current list, %v", err)
+			return nil, fmt.Errorf("get current list error: %v", err)
 		}
 		return list, nil
-	case Watch:
-		var option = new(metav1.ListOptions)
-		if err := app.OptionTo(option); err != nil {
+	case metaserver.Watch:
+		if err := c.checkNodePermission(app); err != nil {
 			return nil, err
 		}
-		if err := c.HandlerCenter.AddListener(app.ToListener(*option)); err != nil {
+		listener, err := applicationToListener(app)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := c.HandlerCenter.AddListener(listener); err != nil {
 			return nil, fmt.Errorf("failed to add listener, %v", err)
 		}
 		return nil, nil
-	case Get:
+	case metaserver.Get:
 		var option = new(metav1.GetOptions)
 		if err := app.OptionTo(option); err != nil {
 			return nil, err
 		}
-		retObj, err := c.kubeclient.Resource(gvr).Namespace(ns).Get(context.TODO(), name, *option)
+		retObj, err := c.dynamicClient.Resource(gvr).Namespace(ns).Get(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), name, *option)
 		if err != nil {
 			return nil, err
 		}
 		return retObj, nil
-	case Create:
+	case metaserver.Create:
 		var option = new(metav1.CreateOptions)
 		if err := app.OptionTo(option); err != nil {
 			return nil, err
@@ -492,24 +147,24 @@ func (c *Center) ProcessApplication(app *Application) (interface{}, error) {
 		var retObj interface{}
 		var err error
 		if app.Subresource == "" {
-			retObj, err = c.kubeclient.Resource(gvr).Namespace(ns).Create(context.TODO(), obj, *option)
+			retObj, err = c.dynamicClient.Resource(gvr).Namespace(ns).Create(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), obj, *option)
 		} else {
-			retObj, err = c.kubeclient.Resource(gvr).Namespace(ns).Create(context.TODO(), obj, *option, app.Subresource)
+			retObj, err = c.dynamicClient.Resource(gvr).Namespace(ns).Create(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), obj, *option, app.Subresource)
 		}
 		if err != nil {
 			return nil, err
 		}
 		return retObj, err
-	case Delete:
+	case metaserver.Delete:
 		var option = new(metav1.DeleteOptions)
 		if err := app.OptionTo(&option); err != nil {
 			return nil, err
 		}
-		if err := c.kubeclient.Resource(gvr).Namespace(ns).Delete(context.TODO(), name, *option); err != nil {
+		if err := c.dynamicClient.Resource(gvr).Namespace(ns).Delete(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), name, *option); err != nil {
 			return nil, err
 		}
 		return nil, nil
-	case Update:
+	case metaserver.Update:
 		var option = new(metav1.UpdateOptions)
 		if err := app.OptionTo(option); err != nil {
 			return nil, err
@@ -521,15 +176,15 @@ func (c *Center) ProcessApplication(app *Application) (interface{}, error) {
 		var retObj interface{}
 		var err error
 		if app.Subresource == "" {
-			retObj, err = c.kubeclient.Resource(gvr).Namespace(ns).Update(context.TODO(), obj, *option)
+			retObj, err = c.dynamicClient.Resource(gvr).Namespace(ns).Update(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), obj, *option)
 		} else {
-			retObj, err = c.kubeclient.Resource(gvr).Namespace(ns).Update(context.TODO(), obj, *option, app.Subresource)
+			retObj, err = c.dynamicClient.Resource(gvr).Namespace(ns).Update(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), obj, *option, app.Subresource)
 		}
 		if err != nil {
 			return nil, err
 		}
 		return retObj, nil
-	case UpdateStatus:
+	case metaserver.UpdateStatus:
 		var option = new(metav1.UpdateOptions)
 		if err := app.OptionTo(option); err != nil {
 			return nil, err
@@ -538,17 +193,17 @@ func (c *Center) ProcessApplication(app *Application) (interface{}, error) {
 		if err := app.ReqBodyTo(obj); err != nil {
 			return nil, err
 		}
-		retObj, err := c.kubeclient.Resource(gvr).Namespace(ns).UpdateStatus(context.TODO(), obj, *option)
+		retObj, err := c.dynamicClient.Resource(gvr).Namespace(ns).UpdateStatus(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), obj, *option)
 		if err != nil {
 			return nil, err
 		}
 		return retObj, nil
-	case Patch:
-		var pi = new(PatchInfo)
+	case metaserver.Patch:
+		var pi = new(metaserver.PatchInfo)
 		if err := app.OptionTo(pi); err != nil {
 			return nil, err
 		}
-		retObj, err := c.kubeclient.Resource(gvr).Namespace(ns).Patch(context.TODO(), pi.Name, pi.PatchType, pi.Data, pi.Options, pi.Subresources...)
+		retObj, err := c.dynamicClient.Resource(gvr).Namespace(ns).Patch(utilcontext.WithEdgeNode(context.TODO(), app.Nodename), pi.Name, pi.PatchType, pi.Data, pi.Options, pi.Subresources...)
 		if err != nil {
 			return nil, err
 		}
@@ -558,8 +213,17 @@ func (c *Center) ProcessApplication(app *Application) (interface{}, error) {
 	}
 }
 
+func (c *Center) passThroughRequest(app *metaserver.Application) (interface{}, error) {
+	kubeClient, ok := c.kubeClient.(*kubernetes.Clientset)
+	if !ok {
+		return nil, fmt.Errorf("converting kubeClient to *kubernetes.Clientset type failed")
+	}
+	verb := strings.ToUpper(string(app.Verb))
+	return kubeClient.RESTClient().Verb(verb).AbsPath(app.Key).Body(app.ReqBody).Do(utilcontext.WithEdgeNode(context.TODO(), app.Nodename)).Raw()
+}
+
 // Response update application, generate and send resp message to edge
-func (c *Center) Response(app *Application, parentID string, status applicationStatus, err error, respContent interface{}) {
+func (c *Center) Response(app *metaserver.Application, parentID string, status metaserver.ApplicationStatus, err error, respContent interface{}) {
 	app.Status = status
 	if err != nil {
 		apierr, ok := err.(apierrors.APIStatus)
@@ -570,19 +234,19 @@ func (c *Center) Response(app *Application, parentID string, status applicationS
 		}
 	}
 	if respContent != nil {
-		if app.Verb == List || app.Verb == Get {
+		if app.Verb == metaserver.List || app.Verb == metaserver.Get {
 			filter.MessageFilter(respContent, app.Nodename)
 		}
-		app.RespBody = toBytes(respContent)
+		app.RespBody = metaserver.ToBytes(respContent)
 	}
 
-	resource, err := messagelayer.BuildResource(app.Nodename, Ignore, ApplicationResource, Ignore)
+	resource, err := messagelayer.BuildResource(app.Nodename, metaserver.Ignore, metaserver.ApplicationResource, metaserver.Ignore)
 	if err != nil {
 		klog.Warningf("built message resource failed with error: %s", err)
 		return
 	}
 	msg := model.NewMessage(parentID).
-		BuildRouter(modules.DynamicControllerModuleName, message.ResourceGroupName, resource, ApplicationResp).
+		BuildRouter(modules.DynamicControllerModuleName, message.ResourceGroupName, resource, metaserver.ApplicationResp).
 		FillBody(app)
 
 	if err := c.messageLayer.Response(*msg); err != nil {
@@ -592,6 +256,142 @@ func (c *Center) Response(app *Application, parentID string, status applicationS
 	klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 }
 
-func (c *Center) GC() {
+// ProcessWatchSync process watch sync message
+func (c *Center) ProcessWatchSync(msg model.Message) error {
+	nodeID, err := messagelayer.GetNodeID(msg)
+	if err != nil {
+		return err
+	}
 
+	applications, err := metaserver.MsgToApplications(msg)
+	if err != nil {
+		return fmt.Errorf("failed translate msg to Applications: %v", err)
+	}
+
+	addedWatchApp, removedListeners := c.getWatchDiff(applications, nodeID)
+
+	// gc already removed listeners
+	for _, listener := range removedListeners {
+		c.HandlerCenter.DeleteListener(listener)
+	}
+
+	failedWatchApp := make(map[string]metaserver.Application)
+
+	// add listener for new added watch app
+	for _, watchApp := range addedWatchApp {
+		if config.Config.EnableAuthorization && nodeID != watchApp.Nodename {
+			return fmt.Errorf("node name %q is not allowed", watchApp.Nodename)
+		}
+		err := c.processWatchApp(&watchApp)
+		if err != nil {
+			watchApp.Status = metaserver.Rejected
+			apiErr, ok := err.(apierrors.APIStatus)
+			if ok {
+				watchApp.Error = apierrors.StatusError{ErrStatus: apiErr.Status()}
+			} else {
+				watchApp.Reason = err.Error()
+			}
+			failedWatchApp[watchApp.ID] = watchApp
+			klog.Errorf("processWatchApp %s err: %v", watchApp.String(), err)
+		}
+	}
+
+	respMsg := model.NewMessage(msg.GetID()).
+		BuildRouter(modules.DynamicControllerModuleName, message.ResourceGroupName, msg.GetResource(), metaserver.ApplicationResp).
+		FillBody(failedWatchApp)
+
+	if err := c.messageLayer.Response(*respMsg); err != nil {
+		klog.Warningf("send message failed error: %s, operation: %s, resource: %s", err, respMsg.GetOperation(), respMsg.GetResource())
+		return err
+	}
+
+	return nil
+}
+
+func (c *Center) getWatchDiff(allWatchAppInEdge map[string]metaserver.Application,
+	nodeID string) ([]metaserver.Application, []*SelectorListener) {
+	listenerInCloud := c.HandlerCenter.GetListenersForNode(nodeID)
+
+	addedWatchApp := make([]metaserver.Application, 0)
+	for ID, app := range allWatchAppInEdge {
+		if _, exist := listenerInCloud[ID]; !exist {
+			addedWatchApp = append(addedWatchApp, app)
+			klog.Infof("added watch app %s", app.String())
+		}
+	}
+
+	removedListeners := make([]*SelectorListener, 0)
+	for ID, listener := range listenerInCloud {
+		if _, exist := allWatchAppInEdge[ID]; !exist {
+			removedListeners = append(removedListeners, listener)
+			klog.Infof("need removed listener %s", listener.id)
+		}
+	}
+
+	return addedWatchApp, removedListeners
+}
+
+func (c *Center) processWatchApp(watchApp *metaserver.Application) error {
+	if err := c.checkNodePermission(watchApp); err != nil {
+		return err
+	}
+
+	watchApp.Status = metaserver.InProcessing
+	listener, err := applicationToListener(watchApp)
+	if err != nil {
+		return err
+	}
+
+	if err := c.HandlerCenter.AddListener(listener); err != nil {
+		return fmt.Errorf("failed to add listener, %v", err)
+	}
+
+	return nil
+}
+
+func (c *Center) checkNodePermission(app *metaserver.Application) error {
+	if !config.Config.EnableAuthorization {
+		return nil
+	}
+	gvr, ns, name := metaserver.ParseKey(app.Key)
+
+	subjectAccessReview := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace:   ns,
+				Verb:        string(app.Verb),
+				Group:       gvr.Group,
+				Version:     gvr.Version,
+				Resource:    gvr.Resource,
+				Subresource: app.Subresource,
+				Name:        name,
+			},
+			User:   constants.NodesUserPrefix + app.Nodename,
+			Groups: []string{constants.NodesGroup},
+		},
+	}
+	ret, err := c.kubeClient.AuthorizationV1().SubjectAccessReviews().Create(context.TODO(), subjectAccessReview, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("node %s permission check failed: %v", app.Nodename, err)
+	}
+	if !ret.Status.Allowed {
+		return fmt.Errorf("node %q is not allowed to access this resource", app.Nodename)
+	}
+
+	return nil
+}
+
+func applicationToListener(app *metaserver.Application) (*SelectorListener, error) {
+	var option = new(metav1.ListOptions)
+	if err := app.OptionTo(option); err != nil {
+		return nil, err
+	}
+
+	gvr, namespace, _ := metaserver.ParseKey(app.Key)
+	selector := NewSelector(option.LabelSelector, option.FieldSelector)
+	if namespace != "" {
+		selector.Field = fields.AndSelectors(selector.Field, fields.OneTermEqualSelector("metadata.namespace", namespace))
+	}
+
+	return NewSelectorListener(app.ID, app.Nodename, gvr, selector), nil
 }

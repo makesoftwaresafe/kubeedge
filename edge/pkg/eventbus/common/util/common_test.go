@@ -29,19 +29,19 @@ import (
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	eventconfig "github.com/kubeedge/kubeedge/edge/pkg/eventbus/config"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
 var clientOptions = MQTT.NewClientOptions()
 
 func init() {
 	nodeName := "testEdge"
-	cfg := v1alpha1.NewDefaultEdgeCoreConfig()
+	cfg := v1alpha2.NewDefaultEdgeCoreConfig()
 	eventconfig.InitConfigure(cfg.Modules.EventBus, nodeName)
 }
 
-//TestCheckKeyExist checks the functionality of CheckKeyExist function
+// TestCheckKeyExist checks the functionality of CheckKeyExist function
 func TestCheckKeyExist(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -72,7 +72,7 @@ func TestCheckKeyExist(t *testing.T) {
 	}
 }
 
-//TestCheckClientToken checks client token received
+// TestCheckClientToken checks client token received
 func TestCheckClientToken(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -101,7 +101,7 @@ func TestCheckClientToken(t *testing.T) {
 	}
 }
 
-//TestPathExist checks the functionality of PathExist function
+// TestPathExist checks the functionality of PathExist function
 func TestPathExist(t *testing.T) {
 	tests := []struct {
 		name string
@@ -128,7 +128,7 @@ func TestPathExist(t *testing.T) {
 	}
 }
 
-//TestHubClientInit checks the HubClientInit method that it returns the same clientOptions object or not
+// TestHubClientInit checks the HubClientInit method that it returns the same clientOptions object or not
 func TestHubClientInit(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -184,7 +184,7 @@ func TestHubClientInit(t *testing.T) {
 	}
 }
 
-//TestLoopConnect checks LoopConnect to connect to MQTT broker
+// TestLoopConnect checks LoopConnect to connect to MQTT broker
 func TestLoopConnect(t *testing.T) {
 	tests := []struct {
 		name          string

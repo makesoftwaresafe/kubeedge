@@ -18,6 +18,7 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -31,7 +32,12 @@ import (
 
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clientset "k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
+
+	"github.com/kubeedge/kubeedge/common/constants"
 )
 
 func getpwd() string {
@@ -44,7 +50,7 @@ func getpwd() string {
 	return dir
 }
 
-//DeRegisterNodeFromMaster function to deregister the node from master
+// DeRegisterNodeFromMaster function to deregister the node from master
 func DeRegisterNodeFromMaster(nodehandler, nodename string) error {
 	resp, err := SendHTTPRequest(http.MethodDelete, nodehandler+"/"+nodename)
 	if err != nil {
@@ -57,11 +63,11 @@ func DeRegisterNodeFromMaster(nodehandler, nodename string) error {
 	return nil
 }
 
-//GenerateNodeReqBody function to generate the node request body
+// GenerateNodeReqBody function to generate the node request body
 func GenerateNodeReqBody(nodeid, nodeselector string) (map[string]interface{}, error) {
 	var temp map[string]interface{}
 
-	body := fmt.Sprintf(`{"kind": "Node","apiVersion": "v1","metadata": {"name": "%s","labels": {"name": "edgenode", "disktype":"%s", "node-role.kubernetes.io/edge": ""}}}`, nodeid, nodeselector)
+	body := fmt.Sprintf(`{"kind": "Node","apiVersion": "v1","metadata": {"name": "%s","labels": {"name": "edgenode", "disktype":"%s", "%s": "%s"}}}`, nodeid, nodeselector, constants.EdgeNodeRoleKey, constants.EdgeNodeRoleValue)
 	err := json.Unmarshal([]byte(body), &temp)
 	if err != nil {
 		Fatalf("Unmarshal body failed: %v", err)
@@ -71,7 +77,7 @@ func GenerateNodeReqBody(nodeid, nodeselector string) (map[string]interface{}, e
 	return temp, nil
 }
 
-//RegisterNodeToMaster function to register node to master
+// RegisterNodeToMaster function to register node to master
 func RegisterNodeToMaster(UID, nodehandler, nodeselector string) error {
 	body, err := GenerateNodeReqBody(UID, nodeselector)
 	if err != nil {
@@ -111,7 +117,7 @@ func RegisterNodeToMaster(UID, nodehandler, nodeselector string) error {
 	return nil
 }
 
-//CheckNodeReadyStatus function to get node status
+// CheckNodeReadyStatus function to get node status
 func CheckNodeReadyStatus(nodehandler, nodename string) string {
 	var node v1.Node
 	var nodeStatus = "unknown"
@@ -136,7 +142,7 @@ func CheckNodeReadyStatus(nodehandler, nodename string) string {
 	return string(node.Status.Phase)
 }
 
-//CheckNodeDeleteStatus function to check node delete status
+// CheckNodeDeleteStatus function to check node delete status
 func CheckNodeDeleteStatus(nodehandler, nodename string) int {
 	resp, err := SendHTTPRequest(http.MethodGet, nodehandler+"/"+nodename)
 	if err != nil {
@@ -147,7 +153,7 @@ func CheckNodeDeleteStatus(nodehandler, nodename string) int {
 	return resp.StatusCode
 }
 
-//HandleConfigmap function to create configmaps for respective edgenodes
+// HandleConfigmap function to create configmaps for respective edgenodes
 func HandleConfigmap(configName chan error, operation, confighandler string, IsEdgeCore bool) {
 	var req *http.Request
 	var file string
@@ -202,27 +208,12 @@ func HandleConfigmap(configName chan error, operation, confighandler string, IsE
 	}
 }
 
-//GetConfigmap function to get configmaps for respective edgenodes
-func GetConfigmap(apiConfigMap string) (int, []byte) {
-	resp, err := SendHTTPRequest(http.MethodGet, apiConfigMap)
-	if err != nil {
-		Fatalf("Sending SenHttpRequest failed: %v", err)
-		return -1, nil
+func DeleteConfigMap(client clientset.Interface, ns, name string) error {
+	err := client.CoreV1().ConfigMaps(ns).Delete(context.TODO(), name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
-	defer resp.Body.Close()
-	return resp.StatusCode, body
-}
-
-//DeleteConfigmap function to delete configmaps
-func DeleteConfigmap(apiConfigMap string) int {
-	resp, err := SendHTTPRequest(http.MethodDelete, apiConfigMap)
-	if err != nil {
-		Fatalf("Sending SenHttpRequest failed: %v", err)
-		return -1
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode
+	return err
 }
 
 func TaintEdgeDeployedNode(toTaint bool, taintHandler string) error {
@@ -260,7 +251,7 @@ func TaintEdgeDeployedNode(toTaint bool, taintHandler string) error {
 	return nil
 }
 
-//GetNodes function to get configmaps for respective edgenodes
+// GetNodes function to get configmaps for respective edgenodes
 func GetNodes(api string) v1.NodeList {
 	var nodes v1.NodeList
 	resp, err := SendHTTPRequest(http.MethodGet, api)

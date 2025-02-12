@@ -8,7 +8,7 @@ import (
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 )
 
 var (
@@ -16,18 +16,22 @@ var (
 	syncMsgRespTimeout = 1 * time.Minute
 )
 
-//CoreInterface is interface of metaclient
+// CoreInterface is interface of metaclient
 type CoreInterface interface {
 	PodsGetter
 	PodStatusGetter
 	ConfigMapsGetter
+	EventsGetter
 	NodesGetter
 	NodeStatusGetter
 	SecretsGetter
 	ServiceAccountTokenGetter
+	ServiceAccountsGetter
 	PersistentVolumesGetter
 	PersistentVolumeClaimsGetter
 	VolumeAttachmentsGetter
+	LeasesGetter
+	CertificateSigningRequestsGetter
 }
 
 type metaClient struct {
@@ -40,6 +44,10 @@ func (m *metaClient) Pods(namespace string) PodsInterface {
 
 func (m *metaClient) ConfigMaps(namespace string) ConfigMapsInterface {
 	return newConfigMaps(namespace, m.send)
+}
+
+func (m *metaClient) Events(namespace string) EventsInterface {
+	return newEvents(namespace, m.send)
 }
 
 func (m *metaClient) Nodes(namespace string) NodesInterface {
@@ -58,13 +66,17 @@ func (m *metaClient) ServiceAccountToken() ServiceAccountTokenInterface {
 	return newServiceAccountToken(m.send)
 }
 
+func (m *metaClient) ServiceAccounts(namespace string) ServiceAccountInterface {
+	return newServiceAccount(namespace)
+}
+
 func (m *metaClient) PodStatus(namespace string) PodStatusInterface {
 	return newPodStatus(namespace, m.send)
 }
 
 // New PersistentVolumes metaClient
-func (m *metaClient) PersistentVolumes(namespace string) PersistentVolumesInterface {
-	return newPersistentVolumes(namespace, m.send)
+func (m *metaClient) PersistentVolumes() PersistentVolumesInterface {
+	return newPersistentVolumes(m.send)
 }
 
 // New PersistentVolumeClaims metaClient
@@ -77,6 +89,14 @@ func (m *metaClient) VolumeAttachments(namespace string) VolumeAttachmentsInterf
 	return newVolumeAttachments(namespace, m.send)
 }
 
+func (m *metaClient) Leases(namespace string) LeasesInterface {
+	return newLeases(namespace, m.send)
+}
+
+func (m *metaClient) CertificateSigningRequests() CertificateSigningRequestInterface {
+	return newCertificateSigningRequests(m.send)
+}
+
 // New creates new metaclient
 func New() CoreInterface {
 	return &metaClient{
@@ -84,7 +104,7 @@ func New() CoreInterface {
 	}
 }
 
-//SendInterface is to sync interface
+// SendInterface is to sync interface
 type SendInterface interface {
 	SendSync(message *model.Message) (*model.Message, error)
 	Send(message *model.Message)
@@ -102,7 +122,7 @@ func (s *send) SendSync(message *model.Message) (*model.Message, error) {
 	var resp model.Message
 	retries := 0
 	err = wait.Poll(syncPeriod, syncMsgRespTimeout, func() (bool, error) {
-		resp, err = beehiveContext.SendSync(metamanager.MetaManagerModuleName, *message, syncMsgRespTimeout)
+		resp, err = beehiveContext.SendSync(modules.MetaManagerModuleName, *message, syncMsgRespTimeout)
 		retries++
 		if err == nil {
 			klog.V(4).Infof("send sync message %s succeed and response: %v", message.GetResource(), resp)
@@ -118,13 +138,5 @@ func (s *send) SendSync(message *model.Message) (*model.Message, error) {
 }
 
 func (s *send) Send(message *model.Message) {
-	beehiveContext.Send(metamanager.MetaManagerModuleName, *message)
-}
-
-func SetSyncPeriod(time time.Duration) {
-	syncPeriod = time
-}
-
-func SetSyncMsgRespTimeout(time time.Duration) {
-	syncMsgRespTimeout = time
+	beehiveContext.Send(modules.MetaManagerModuleName, *message)
 }

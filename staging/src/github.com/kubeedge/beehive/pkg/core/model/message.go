@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"time"
 
-	uuid "github.com/google/uuid"
+	"github.com/google/uuid"
 )
 
 // Constants for database operations and resource type settings
@@ -16,21 +16,30 @@ const (
 	DeleteOperation        = "delete"
 	QueryOperation         = "query"
 	UpdateOperation        = "update"
+	PatchOperation         = "patch"
 	UploadOperation        = "upload"
 	ResponseOperation      = "response"
 	ResponseErrorOperation = "error"
 
 	ResourceTypePod                 = "pod"
+	ResourceTypeEvent               = "event"
 	ResourceTypeConfigmap           = "configmap"
 	ResourceTypeServiceAccountToken = "serviceaccounttoken"
 	ResourceTypeSecret              = "secret"
 	ResourceTypeNode                = "node"
 	ResourceTypePodlist             = "podlist"
 	ResourceTypePodStatus           = "podstatus"
+	ResourceTypePodPatch            = "podpatch"
 	ResourceTypeNodeStatus          = "nodestatus"
+	ResourceTypeNodePatch           = "nodepatch"
 	ResourceTypeRule                = "rule"
 	ResourceTypeRuleEndpoint        = "ruleendpoint"
 	ResourceTypeRuleStatus          = "rulestatus"
+	ResourceTypeLease               = "lease"
+	ResourceTypeSaAccess            = "serviceaccountaccess"
+	ResourceTypeCSR                 = "certificatesigningrequest"
+
+	ResourceTypeK8sCA = "k8s/ca.crt"
 )
 
 // Message struct
@@ -175,6 +184,10 @@ func (msg *Message) GetContentData() ([]byte, error) {
 		return data, nil
 	}
 
+	if data, ok := msg.Content.(string); ok {
+		return []byte(data), nil
+	}
+
 	data, err := json.Marshal(msg.Content)
 	if err != nil {
 		return nil, fmt.Errorf("marshal message content failed: %s", err)
@@ -201,7 +214,7 @@ func (msg *Message) BuildHeader(ID, parentID string, timestamp int64) *Message {
 	return msg
 }
 
-//FillBody fills message  content that you want to send
+// FillBody fills message  content that you want to send
 func (msg *Message) FillBody(content interface{}) *Message {
 	msg.Content = content
 	return msg
@@ -242,7 +255,7 @@ func (msg *Message) NewRespByMessage(message *Message, content interface{}) *Mes
 
 // NewErrorMessage returns a new error message by a message received
 func NewErrorMessage(message *Message, errContent string) *Message {
-	return NewMessage(message.Header.ParentID).
+	return NewMessage(message.GetID()).
 		SetResourceOperation(message.Router.Resource, ResponseErrorOperation).
 		FillBody(errContent)
 }
@@ -257,6 +270,7 @@ func (msg *Message) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString("MessageID: " + msg.GetID())
 	buffer.WriteString(" ParentID: " + msg.GetParentID())
+	buffer.WriteString(" Group: " + msg.GetGroup())
 	buffer.WriteString(" Source: " + msg.GetSource())
 	buffer.WriteString(" Destination: " + msg.GetDestination())
 	buffer.WriteString(" Resource: " + msg.GetResource())

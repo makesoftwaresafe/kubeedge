@@ -13,31 +13,29 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package utils
 
 import (
 	"crypto/tls"
 	"io"
 	"net/http"
-	"net/url"
-	"sort"
-	"strings"
 	"time"
 )
 
-//Test context struct
+// TestContext struct
 type TestContext struct {
 	Cfg Config
 }
 
-//NewTestContext function to build testcontext with provided config.
+// NewTestContext function to build testcontext with provided config.
 func NewTestContext(cfg Config) *TestContext {
 	return &TestContext{
 		Cfg: cfg,
 	}
 }
 
-//SendHTTPRequest Function to prepare the http req and send
+// SendHTTPRequest Function to prepare the http req and send
 func SendHTTPRequest(method, reqAPI string) (*http.Response, error) {
 	var body io.Reader
 	var resp *http.Response
@@ -64,14 +62,4 @@ func SendHTTPRequest(method, reqAPI string) (*http.Response, error) {
 	}
 	Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Since(t))
 	return resp, nil
-}
-
-//MapLabels function add label selector
-func MapLabels(ls map[string]string) string {
-	selector := make([]string, 0, len(ls))
-	for key, value := range ls {
-		selector = append(selector, key+"="+value)
-	}
-	sort.StringSlice(selector).Sort()
-	return url.QueryEscape(strings.Join(selector, ","))
 }

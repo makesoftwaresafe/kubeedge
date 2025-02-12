@@ -10,7 +10,6 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
 )
 
 // VolumeAttachmentsGetter is interface to get client VolumeAttachments
@@ -48,7 +47,7 @@ func (c *volumeattachments) Create(va *api.VolumeAttachment) (*api.VolumeAttachm
 	return nil, nil
 }
 
-func (c *volumeattachments) Update(va *api.VolumeAttachment) error {
+func (c *volumeattachments) Update(*api.VolumeAttachment) error {
 	return nil
 }
 
@@ -62,7 +61,7 @@ func (c *volumeattachments) Delete(name string) error {
 	return nil
 }
 
-func (c *volumeattachments) Get(name string, options metav1.GetOptions) (*api.VolumeAttachment, error) {
+func (c *volumeattachments) Get(name string, _ metav1.GetOptions) (*api.VolumeAttachment, error) {
 	resource := fmt.Sprintf("%s/%s/%s", c.namespace, "volumeattachment", name)
 	vaMsg := message.BuildMsg(modules.MetaGroup, "", modules.EdgedModuleName, resource, model.QueryOperation, nil)
 	msg, err := c.send.SendSync(vaMsg)
@@ -75,7 +74,7 @@ func (c *volumeattachments) Get(name string, options metav1.GetOptions) (*api.Vo
 		return nil, fmt.Errorf("parse message to volumeattachment failed, err: %v", err)
 	}
 
-	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == metamanager.MetaManagerModuleName {
+	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == modules.MetaManagerModuleName {
 		return handleVolumeAttachmentFromMetaDB(content)
 	}
 	return handleVolumeAttachmentFromMetaManager(content)

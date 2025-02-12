@@ -18,26 +18,30 @@ package image
 
 import (
 	"strings"
+
+	"github.com/kubeedge/kubeedge/common/constants"
+	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
 )
 
 const (
-	CloudAdmission       = "admission"
-	CloudCloudcore       = "cloudcore"
-	CloudIptablesManager = "iptables-manager"
+	CloudAdmission         = "admission"
+	CloudCloudcore         = "cloudcore"
+	CloudIptablesManager   = "iptables-manager"
+	CloudControllerManager = "controller-manager"
 )
 
 const (
-	EdgePause = "pause"
-	EdgeCore  = "edgecore"
-	EdgeMQTT  = "mqtt"
+	EdgeCore = "edgecore"
+	EdgeMQTT = "mqtt"
 )
 
 type Set map[string]string
 
 var cloudComponentSet = Set{
-	CloudAdmission:       "kubeedge/admission",
-	CloudCloudcore:       "kubeedge/cloudcore",
-	CloudIptablesManager: "kubeedge/iptables-manager",
+	CloudAdmission:         "kubeedge/admission",
+	CloudCloudcore:         "kubeedge/cloudcore",
+	CloudIptablesManager:   "kubeedge/iptables-manager",
+	CloudControllerManager: "kubeedge/controller-manager",
 }
 
 var cloudThirdPartySet = Set{}
@@ -47,13 +51,15 @@ var edgeComponentSet = Set{
 }
 
 var edgeThirdPartySet = Set{
-	EdgeMQTT:  "eclipse-mosquitto:1.6.15",
-	EdgePause: "kubeedge/pause:3.1",
+	EdgeMQTT: constants.DefaultMosquittoImage,
 }
 
-func EdgeSet(imageRepository, version string) Set {
-	set := edgeComponentSet.Current(imageRepository, version)
-	thirdSet := edgeThirdPartySet.Current(imageRepository, "")
+func EdgeSet(opt *common.JoinOptions) Set {
+	set := edgeComponentSet.Current(opt.ImageRepository, opt.KubeEdgeVersion)
+	thirdSet := edgeThirdPartySet.Current(opt.ImageRepository, "")
+	if !opt.WithMQTT {
+		thirdSet.Remove(EdgeMQTT)
+	}
 	set = set.Merge(thirdSet)
 	return set
 }
@@ -107,4 +113,9 @@ func (s Set) List() []string {
 		result = append(result, v)
 	}
 	return result
+}
+
+func (s Set) Remove(name string) Set {
+	delete(s, name)
+	return s
 }

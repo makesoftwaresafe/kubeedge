@@ -10,14 +10,16 @@ import (
 
 	"k8s.io/klog/v2"
 
+	v1 "github.com/kubeedge/api/apis/rules/v1"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
+	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/listener"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/provider"
+	commonconstants "github.com/kubeedge/kubeedge/common/constants"
 	commonType "github.com/kubeedge/kubeedge/common/types"
-	v1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
 )
 
 type servicebusFactory struct{}
@@ -39,7 +41,7 @@ func (sf *servicebusFactory) Type() v1.RuleEndpointTypeDef {
 	return v1.RuleEndpointTypeServiceBus
 }
 
-func (sf *servicebusFactory) GetSource(ep *v1.RuleEndpoint, sourceResource map[string]string) provider.Source {
+func (sf *servicebusFactory) GetSource(_ *v1.RuleEndpoint, sourceResource map[string]string) provider.Source {
 	targetURL, exist := sourceResource[constants.TargetURL]
 	if !exist {
 		klog.Errorf("source resource attributes \"target_url\" does not exist")
@@ -80,13 +82,18 @@ func (sb *ServiceBus) Name() string {
 }
 
 func (sb *ServiceBus) Forward(target provider.Target, data interface{}) (response interface{}, err error) {
-	message := data.(*model.Message)
-	res := make(map[string]interface{})
-	v, ok := message.Content.(string)
+	message, ok := data.(*model.Message)
 	if !ok {
-		return nil, errors.New("message content invalid convert to string")
+		klog.Errorf("message type %T error", data)
+		return nil, fmt.Errorf("message type %T error", data)
 	}
-	res["data"] = []byte(v)
+	res := make(map[string]interface{})
+	content, err := message.GetContentData()
+	if !ok {
+		klog.Errorf("get message %s content err: %v", message.GetID(), err)
+		return nil, fmt.Errorf("get message %s content err: %v", message.GetID(), err)
+	}
+	res["data"] = content
 	resp, err := target.GoToTarget(res, nil)
 	if err != nil {
 		klog.Errorf("message is send to target failed. msgID: %s, target: %s, err:%v", message.GetID(), target.Name(), err)
@@ -95,14 +102,14 @@ func (sb *ServiceBus) Forward(target provider.Target, data interface{}) (respons
 	klog.Infof("message is send to target successfully. msgID: %s, target: %s", message.GetID(), target.Name())
 	httpResp, ok := resp.(*http.Response)
 	if ok {
-		byteData, _ := io.ReadAll(httpResp.Body)
+		byteData, _ := io.ReadAll(io.LimitReader(httpResp.Body, commonconstants.MaxRespBodyLength))
 		beehiveContext.SendToGroup(modules.CloudHubModuleGroup, *message.NewRespByMessage(message, string(byteData)))
 	}
 	return resp, nil
 }
 
 func (sf *servicebusFactory) GetTarget(ep *v1.RuleEndpoint, targetResource map[string]string) provider.Target {
-	targetPath, exist := targetResource["path"]
+	targetPath, exist := targetResource[constants.Path]
 	if !exist {
 		klog.Errorf("target resource attributes \"targetPath\" does not exist")
 		return nil
@@ -140,6 +147,14 @@ func (sb *ServiceBus) GoToTarget(data map[string]interface{}, stop chan struct{}
 	msg.SetResourceOperation(resource, request.Method)
 	msg.FillBody(request)
 	msg.SetRoute(modules.RouterSourceServiceBus, modules.UserGroup)
+
+	sessionMgr, err := cloudhub.GetSessionManager()
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := sessionMgr.GetSession(nodeName); !exists {
+		return nil, fmt.Errorf("cloudcore doesn't have session for node:%s", nodeName)
+	}
 	beehiveContext.Send(modules.CloudHubModuleName, *msg)
 	if stop != nil {
 		listener.MessageHandlerInstance.SetCallback(messageID, func(message *model.Message) {

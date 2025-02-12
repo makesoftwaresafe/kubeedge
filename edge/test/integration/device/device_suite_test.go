@@ -21,22 +21,23 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtcommon"
+	"github.com/kubeedge/kubeedge/edge/test/integration/utils"
 	"github.com/kubeedge/kubeedge/edge/test/integration/utils/common"
 	"github.com/kubeedge/kubeedge/edge/test/integration/utils/edge"
 	"github.com/kubeedge/kubeedge/edge/test/integration/utils/helpers"
 )
 
-//context to load config and access across the package
+// context to load config and access across the package
 var (
 	ctx *edge.TestContext
 	cfg edge.Config
 )
 
-//Interface to validate the MQTT connection.
+// Interface to validate the MQTT connection.
 type Token interface {
 	Wait() bool
 	WaitTimeout(time.Duration) bool
@@ -62,7 +63,7 @@ var (
 	ClientID = "eventbus"
 )
 
-//Function to run the Ginkgo Test
+// Function to run the Ginkgo Test
 func TestEdgecoreEventBus(t *testing.T) {
 	RegisterFailHandler(Fail)
 	var _ = BeforeSuite(func() {
@@ -71,8 +72,8 @@ func TestEdgecoreEventBus(t *testing.T) {
 
 		cfg = edge.LoadConfig()
 		ctx = edge.NewTestContext(cfg)
-		//Expect(utils.CreateEdgeCoreConfigFile()).Should(BeNil())
-		//Expect(utils.StartEdgeCore()).Should(BeNil())
+		Expect(utils.CreateEdgeCoreConfigFile(cfg.NodeID)).Should(BeNil())
+		Expect(utils.StartEdgeCore()).Should(BeNil())
 	})
 	AfterSuite(func() {
 		By("After Suite Executing....!")

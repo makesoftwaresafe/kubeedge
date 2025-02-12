@@ -59,11 +59,7 @@ func NewGenericRenderer(files fs.FS, dir, componentName, namespace string, profi
 
 // LoadChart would load the given charts.
 func (h *Renderer) LoadChart() error {
-	if err := h.loadChart(); err != nil {
-		return err
-	}
-
-	return nil
+	return h.loadChart()
 }
 
 // RenderManifest renders the current helm templates with the current values and returns the resulting YAML manifest string.
@@ -195,7 +191,7 @@ func GetFilesRecursive(f fs.FS, root string) ([]string, error) {
 	return res, err
 }
 
-// stripPrefix removes the the given prefix from prefix.
+// stripPrefix removes the given prefix from prefix.
 func stripPrefix(path, prefix string) string {
 	pl := len(strings.Split(prefix, "/"))
 	pv := strings.Split(path, "/")

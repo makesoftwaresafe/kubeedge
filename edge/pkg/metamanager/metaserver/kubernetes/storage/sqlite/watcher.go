@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +18,7 @@ KubeEdge Authors:
 - This File is drive from kubernetes/staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go
 - Refactor to adapter imitator
 */
+
 package sqlite
 
 import (
@@ -28,14 +29,15 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
+	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/agent"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/kubernetes/storage/sqlite/imitator"
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
+	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
 
 const (
@@ -147,6 +149,10 @@ func (wc *watchChan) run() {
 }
 
 func (wc *watchChan) Stop() {
+	applicationID := util.ApplicationIDValue(wc.ctx)
+	if len(applicationID) != 0 {
+		agent.DefaultAgent.CloseApplication(applicationID)
+	}
 	wc.cancel()
 }
 
@@ -165,7 +171,12 @@ func (wc *watchChan) sync() error {
 			return err
 		}
 		for _, kv := range *resp.Kvs {
-			wc.sendEvent(wc.parseMeta(&kv))
+			event, err := wc.parseMeta(&kv)
+			if err != nil {
+				klog.Errorf("parse meta failed, %v", err)
+				continue
+			}
+			wc.sendEvent(event)
 		}
 		wc.initialRev = int64(resp.Revision)
 	case false: /*get*/
@@ -177,7 +188,12 @@ func (wc *watchChan) sync() error {
 			klog.Warningf("get %v obj in key %v", len(*resp.Kvs), wc.key)
 		}
 		for _, kv := range *resp.Kvs {
-			wc.sendEvent(wc.parseMeta(&kv))
+			event, err := wc.parseMeta(&kv)
+			if err != nil {
+				klog.Errorf("parse meta failed, %v", err)
+				continue
+			}
+			wc.sendEvent(event)
 		}
 		wc.initialRev = int64(resp.Revision)
 	}
@@ -187,13 +203,15 @@ func (wc *watchChan) sync() error {
 
 // parseMeta converts meta data to watch.Event
 // and is only called in sync()
-func (wc *watchChan) parseMeta(kv *v2.MetaV2) *watch.Event {
+func (wc *watchChan) parseMeta(kv *v2.MetaV2) (*watch.Event, error) {
 	obj, err := runtime.Decode(wc.watcher.codec, []byte(kv.Value))
-	utilruntime.Must(err)
+	if err != nil {
+		return nil, err
+	}
 	return &watch.Event{
 		Type:   watch.Added,
 		Object: obj,
-	}
+	}, nil
 }
 
 // logWatchChannelErr checks whether the error is about mvcc revision compaction which is regarded as warning

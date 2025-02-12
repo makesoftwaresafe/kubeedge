@@ -10,7 +10,6 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
 )
 
 // PersistentVolumeClaimsGetter is interface to get client PersistentVolumeClaims
@@ -38,19 +37,19 @@ func newPersistentVolumeClaims(n string, s SendInterface) *persistentvolumeclaim
 	}
 }
 
-func (c *persistentvolumeclaims) Create(pvc *api.PersistentVolumeClaim) (*api.PersistentVolumeClaim, error) {
+func (c *persistentvolumeclaims) Create(*api.PersistentVolumeClaim) (*api.PersistentVolumeClaim, error) {
 	return nil, nil
 }
 
-func (c *persistentvolumeclaims) Update(pvc *api.PersistentVolumeClaim) error {
+func (c *persistentvolumeclaims) Update(*api.PersistentVolumeClaim) error {
 	return nil
 }
 
-func (c *persistentvolumeclaims) Delete(name string) error {
+func (c *persistentvolumeclaims) Delete(string) error {
 	return nil
 }
 
-func (c *persistentvolumeclaims) Get(name string, options metav1.GetOptions) (*api.PersistentVolumeClaim, error) {
+func (c *persistentvolumeclaims) Get(name string, _ metav1.GetOptions) (*api.PersistentVolumeClaim, error) {
 	resource := fmt.Sprintf("%s/%s/%s", c.namespace, "persistentvolumeclaim", name)
 	pvcMsg := message.BuildMsg(modules.MetaGroup, "", modules.EdgedModuleName, resource, model.QueryOperation, nil)
 	msg, err := c.send.SendSync(pvcMsg)
@@ -63,7 +62,7 @@ func (c *persistentvolumeclaims) Get(name string, options metav1.GetOptions) (*a
 		return nil, fmt.Errorf("parse message to persistentvolumeclaim failed, err: %v", err)
 	}
 
-	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == metamanager.MetaManagerModuleName {
+	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == modules.MetaManagerModuleName {
 		return handlePersistentVolumeClaimFromMetaDB(content)
 	}
 	return handlePersistentVolumeClaimFromMetaManager(content)

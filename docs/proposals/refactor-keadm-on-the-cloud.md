@@ -49,7 +49,7 @@ spec:
           - matchExpressions:
           - key: node-role.kubernetes.io/edge
               operator: DoesNotExist
-    tolerations: {}
+    tolerations: []
     nodeSelector: {}
     resources:
       limits:
@@ -60,7 +60,7 @@ spec:
         memory: 512Mi
     modules:
       cloudHub:
-        advertiseAddress:   # Causion!: Leave this entry to empty will cause CloudCore to exit abnormally once KubeEdge is enabled. 
+        advertiseAddress:   # Caution!: Leave this entry to empty will cause CloudCore to exit abnormally once KubeEdge is enabled. 
           - ""              # At least a public IP Address or an IP which can be accessed by edge nodes must be provided!           
         nodeLimit: "1000"
         websocket:
@@ -110,7 +110,7 @@ spec:
             - matchExpressions:
               - key: node-role.kubernetes.io/edge
                   operator: DoesNotExist
-    tolerations: {}
+    tolerations: []
     nodeSelector: {}
     resources:
       limits:
@@ -154,7 +154,7 @@ spec:
   profiles:
     # The following four fields represent four scenarios that can be combined or applied individually.
     version: "v1.9.0"     # will use the default recommended configuration to install.
-    iptablesMgrMode: "external" # defalut is internal.
+    iptablesMgrMode: "external" # default is internal.
     enableCloudCoreHaMode: true
     enableEdgemesh: true
 ```
@@ -170,7 +170,7 @@ end=>end: deployed
 start->edit->init->end
 ```
 
-> Every profile-sytle CR could convert to the helm-style CR. And the two CRDs are in the cluster level.
+> Every profile-style CR could convert to the helm-style CR. And the two CRDs are in the cluster level.
 
 ## Plan B: using helm-style cmd
 
@@ -227,7 +227,7 @@ Allow appending file paths of manifests to keadm, separated by commas
 
 #### --dry-run
 
-> print the generated k8s resources on the stdout, not actual excute. Always use in debug mode.
+> print the generated k8s resources on the stdout, not actual execute. Always use in debug mode.
 
 ### config
 
@@ -259,7 +259,7 @@ Allow appending file directories of charts to keadm, separated by commas
 
 ### reset-beta
 
-> Uninstall the exsited helm charts or manifests on the cloud.
+> Uninstall the existing helm charts or manifests on the cloud.
 
 #### --delete-namespace, -D
 

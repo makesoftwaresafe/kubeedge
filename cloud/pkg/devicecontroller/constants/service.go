@@ -4,7 +4,9 @@ package constants
 const (
 	ResourceTypeTwinEdgeUpdated  = "twin/edge_updated"
 	ResourceTypeMembershipDetail = "membership/detail"
+	ResourceDeviceStateUpdated   = "state/update"
 
 	// Group
-	GroupTwin = "twin"
+	GroupTwin     = "twin"
+	GroupResource = "resource"
 )

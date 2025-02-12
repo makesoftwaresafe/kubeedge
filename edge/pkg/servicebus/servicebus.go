@@ -10,19 +10,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	beehiveModel "github.com/kubeedge/beehive/pkg/core/model"
 	commonType "github.com/kubeedge/kubeedge/common/types"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	servicebusConfig "github.com/kubeedge/kubeedge/edge/pkg/servicebus/config"
 	"github.com/kubeedge/kubeedge/edge/pkg/servicebus/dao"
 	"github.com/kubeedge/kubeedge/edge/pkg/servicebus/util"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
 var (
@@ -69,7 +70,7 @@ func newServicebus(enable bool, server string, port, timeout int) *servicebus {
 }
 
 // Register register servicebus
-func Register(s *v1alpha1.ServiceBus) {
+func Register(s *v1alpha2.ServiceBus) {
 	servicebusConfig.InitConfigure(s)
 	core.Register(newServicebus(s.Enable, s.Server, s.Port, s.Timeout))
 	orm.RegisterModel(new(dao.TargetUrls))
@@ -123,12 +124,12 @@ func processMessage(msg *beehiveModel.Message) {
 	}
 	resource := msg.GetResource()
 	switch msg.GetOperation() {
-	case "start":
+	case message.OperationStart:
+		dao.InsertUrls(resource)
 		if atomic.CompareAndSwapInt32(&inited, 0, 1) {
-			dao.InsertUrls(resource)
 			go server(c)
 		}
-	case "stop":
+	case message.OperationStop:
 		dao.DeleteUrlsByKey(resource)
 		if dao.IsTableEmpty() {
 			c <- struct{}{}
@@ -180,8 +181,7 @@ func processMessage(msg *beehiveModel.Message) {
 			return
 		}
 		defer resp.Body.Close()
-		resp.Body = http.MaxBytesReader(nil, resp.Body, maxBodySize)
-		resBody, err := io.ReadAll(resp.Body)
+		resBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 		if err != nil {
 			if err.Error() == "http: request body too large" {
 				err = fmt.Errorf("response body too large")
@@ -236,6 +236,7 @@ func buildBasicHandler(timeout time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		sReq := &serverRequest{}
 		sResp := &serverResponse{}
+		req.Body = http.MaxBytesReader(w, req.Body, maxBodySize)
 		byteData, err := io.ReadAll(req.Body)
 		if err != nil {
 			sResp.Code = http.StatusBadRequest
@@ -264,13 +265,18 @@ func buildBasicHandler(timeout time.Duration) http.Handler {
 			w.Write(marshalResult(sResp))
 			return
 		}
-		resp, ok := responseMessage.GetContent().(string)
-		if ok {
-			sResp.Code = http.StatusOK
-			sResp.Msg = "receive response from cloud successfully"
-			sResp.Body = resp
+		resp, err := responseMessage.GetContentData()
+		if err != nil {
+			sResp.Code = http.StatusInternalServerError
+			sResp.Msg = err.Error()
 			w.Write(marshalResult(sResp))
+			return
 		}
+
+		sResp.Code = http.StatusOK
+		sResp.Msg = "receive response from cloud successfully"
+		sResp.Body = string(resp)
+		w.Write(marshalResult(sResp))
 	})
 }
 

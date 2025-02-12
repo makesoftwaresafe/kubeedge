@@ -6,7 +6,7 @@ const (
 	// RetryTimes for retry times
 	RetryTimes = 5
 	// RetryInterval for retry interval
-	RetryInterval = 10 * time.Second
+	RetryInterval = 1 * time.Second
 
 	// LifeCycleConnectETPrefix the topic prefix for connected event
 	LifeCycleConnectETPrefix = "$hw/events/connected/"
@@ -91,6 +91,8 @@ const (
 	Confirm = "Confirm"
 	// Disconnected event
 	Disconnected = "disconnected"
+	// MetaDeviceOperation event
+	MetaDeviceOperation = "MetaDeviceOperation"
 
 	// CommModule communicate module
 	CommModule = "CommModule"
@@ -100,6 +102,8 @@ const (
 	MemModule = "MemModule"
 	// TwinModule twin module
 	TwinModule = "TwinModule"
+	// DMIModule DMI module
+	DMIModule = "DMIModule"
 	// HubModule the name of hub module
 	HubModule = "websocket"
 	// EventHubModule the name of event hub module
@@ -117,4 +121,11 @@ const (
 	InternalErrorCode = 500
 
 	TypeDeleted = "deleted"
+	TypeUpdated = "updated"
+
+	DeviceStatusOK        = "ok"
+	DeviceStatusOnline    = "online"
+	DeviceStatusOffline   = "offline"
+	DeviceStatusUnhealthy = "unhealthy" /* Unhealthy status from device */
+	DeviceStatusUnknown   = "unknown"
 )

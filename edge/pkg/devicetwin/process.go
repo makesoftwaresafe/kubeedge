@@ -27,7 +27,7 @@ var (
 	ActionModuleMap map[string]string
 )
 
-//RegisterDTModule register dtmodule
+// RegisterDTModule register dtmodule
 func (dt *DeviceTwin) RegisterDTModule(name string) {
 	module := dtmodule.DTModule{
 		Name: name,
@@ -40,23 +40,27 @@ func (dt *DeviceTwin) RegisterDTModule(name string) {
 	dt.DTModules[name] = module
 }
 
-//distributeMsg distribute message to diff module
+// distributeMsg distribute message to diff module
 func (dt *DeviceTwin) distributeMsg(m interface{}) error {
 	msg, ok := m.(model.Message)
 	if !ok {
 		return errors.New("distribute message, msg is nil")
 	}
+
 	message := dttype.DTMessage{Msg: &msg}
 	if message.Msg.GetParentID() != "" {
 		klog.Infof("Send msg to the %s module in twin", dtcommon.CommModule)
 		confirmMsg := dttype.DTMessage{Msg: model.NewMessage(message.Msg.GetParentID()), Action: dtcommon.Confirm}
 		if err := dt.DTContexts.CommTo(dtcommon.CommModule, &confirmMsg); err != nil {
+			klog.Errorf("fail to send msg %s to CommModule with err: %+v", confirmMsg.Msg.Header.ID, err)
 			return err
 		}
+		return nil
 	}
 	if !classifyMsg(&message) {
 		return errors.New("not found action")
 	}
+
 	if ActionModuleMap == nil {
 		initActionModuleMap()
 	}
@@ -107,6 +111,7 @@ func initActionModuleMap() {
 	ActionModuleMap[dtcommon.Disconnected] = dtcommon.CommModule
 	ActionModuleMap[dtcommon.LifeCycle] = dtcommon.CommModule
 	ActionModuleMap[dtcommon.Confirm] = dtcommon.CommModule
+	ActionModuleMap[dtcommon.MetaDeviceOperation] = dtcommon.DMIModule
 }
 
 // SyncSqlite sync sqlite
@@ -130,7 +135,7 @@ func SyncSqlite(context *dtcontext.DTContext) error {
 	return nil
 }
 
-//SyncDeviceFromSqlite sync device from sqlite
+// SyncDeviceFromSqlite sync device from sqlite
 func SyncDeviceFromSqlite(context *dtcontext.DTContext, deviceID string) error {
 	klog.Infof("Sync device detail info from DB of device %s", deviceID)
 	_, exist := context.GetDevice(deviceID)
@@ -209,7 +214,11 @@ func classifyMsg(message *dttype.DTMessage) bool {
 		} else {
 			identity = splitString[idLoc]
 			loc := strings.Index(topic, identity)
-			nextLoc := loc + len(identity)
+			var nextLoc int
+			if strings.Contains(topic, dtcommon.DeviceETPrefix) {
+				identity = identity + "/" + splitString[idLoc+1]
+			}
+			nextLoc = loc + len(identity)
 			prefix := topic[0:loc]
 			suffix := topic[nextLoc:]
 			klog.Infof("%s %s", prefix, suffix)
@@ -261,12 +270,25 @@ func classifyMsg(message *dttype.DTMessage) bool {
 			return true
 		}
 		return false
+	} else if strings.Compare(msgSource, "meta") == 0 || strings.Compare(msgSource, "metamanager") == 0 {
+		switch message.Msg.Content.(type) {
+		case []byte:
+			klog.Info("Message content type is []byte, no need to marshal again")
+		default:
+			content, err := json.Marshal(message.Msg.Content)
+			if err != nil {
+				return false
+			}
+			message.Msg.Content = content
+		}
+		message.Action = dtcommon.MetaDeviceOperation
+		return true
 	}
 	return false
 }
 
 func (dt *DeviceTwin) runDeviceTwin() {
-	moduleNames := []string{dtcommon.MemModule, dtcommon.TwinModule, dtcommon.DeviceModule, dtcommon.CommModule}
+	moduleNames := []string{dtcommon.MemModule, dtcommon.TwinModule, dtcommon.DeviceModule, dtcommon.CommModule, dtcommon.DMIModule}
 	for _, v := range moduleNames {
 		dt.RegisterDTModule(v)
 		go dt.DTModules[v].Start()

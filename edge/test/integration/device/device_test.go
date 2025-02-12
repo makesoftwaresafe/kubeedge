@@ -23,7 +23,7 @@ import (
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 	_ "github.com/mattn/go-sqlite3"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtcommon"
@@ -32,7 +32,7 @@ import (
 	. "github.com/kubeedge/kubeedge/edge/test/integration/utils/helpers"
 )
 
-//Devicestate from subscribed MQTT topic
+// Devicestate from subscribed MQTT topic
 var DeviceState string
 
 type DeviceUpdates struct {
@@ -66,11 +66,11 @@ var TokenClient Token
 var ClientOpts *MQTT.ClientOptions
 var Client MQTT.Client
 
-func SubMessageReceived(client MQTT.Client, message MQTT.Message) {
+func SubMessageReceived(_ MQTT.Client, message MQTT.Message) {
 	var deviceState DeviceUpdates
 	topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateResultSuffix
 	if message.Topic() == topic {
-		devicePayload := (message.Payload())
+		devicePayload := message.Payload()
 		err := json.Unmarshal(devicePayload, &deviceState)
 		if err != nil {
 			common.Fatalf("Unmarshall failed %s", err)
@@ -78,10 +78,10 @@ func SubMessageReceived(client MQTT.Client, message MQTT.Message) {
 	}
 	DeviceState = deviceState.State
 }
-func DeviceSubscribed(client MQTT.Client, message MQTT.Message) {
+func DeviceSubscribed(_ MQTT.Client, message MQTT.Message) {
 	topic := dtcommon.MemETPrefix + ctx.Cfg.NodeID + dtcommon.MemETUpdateSuffix
 	if message.Topic() == topic {
-		devicePayload := (message.Payload())
+		devicePayload := message.Payload()
 		err := json.Unmarshal(devicePayload, MemDeviceUpdate)
 		if err != nil {
 			common.Fatalf("Unmarshall failed %s", err)
@@ -97,7 +97,7 @@ var DeviceATT dttype.Device
 var DeviceIDWithTwin string
 var DeviceTW dttype.Device
 
-//Run Test cases
+// Run Test cases
 var _ = Describe("Event Bus Testing", func() {
 	Context("Publish on eventbus topics throgh MQTT internal broker", func() {
 		BeforeEach(func() {

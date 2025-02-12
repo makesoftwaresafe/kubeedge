@@ -24,11 +24,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kubeedge/kubeedge/common/constants"
+	"github.com/kubeedge/api/apis/common/constants"
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2/validation"
 	types "github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1/validation"
 	"github.com/kubeedge/kubeedge/pkg/util"
+	"github.com/kubeedge/kubeedge/pkg/viaduct/pkg/api"
 )
 
 // KubeEdgeInstTool embeds Common struct and contains cloud node ip:port information
@@ -38,13 +39,13 @@ type KubeEdgeInstTool struct {
 	CertPath              string
 	CloudCoreIP           string
 	EdgeNodeName          string
-	RuntimeType           string
 	RemoteRuntimeEndpoint string
 	Token                 string
 	CertPort              string
 	CGroupDriver          string
 	TarballPath           string
 	Labels                []string
+	HubProtocol           string
 }
 
 // InstallTools downloads KubeEdge for the specified version
@@ -91,29 +92,24 @@ func (ku *KubeEdgeInstTool) createEdgeConfigFiles() error {
 		return fmt.Errorf("not able to create %s folder path", KubeEdgeConfigDir)
 	}
 
-	edgeCoreConfig := v1alpha1.NewDefaultEdgeCoreConfig()
-	edgeCoreConfig.Modules.EdgeHub.WebSocket.Server = ku.CloudCoreIP
-
+	edgeCoreConfig := v1alpha2.NewDefaultEdgeCoreConfig()
 	if ku.EdgeNodeName != "" {
 		edgeCoreConfig.Modules.Edged.HostnameOverride = ku.EdgeNodeName
 	}
-	if ku.RuntimeType != "" {
-		edgeCoreConfig.Modules.Edged.RuntimeType = ku.RuntimeType
-	}
 	if ku.CGroupDriver != "" {
 		switch ku.CGroupDriver {
-		case v1alpha1.CGroupDriverSystemd:
-			edgeCoreConfig.Modules.Edged.CGroupDriver = v1alpha1.CGroupDriverSystemd
-		case v1alpha1.CGroupDriverCGroupFS:
-			edgeCoreConfig.Modules.Edged.CGroupDriver = v1alpha1.CGroupDriverCGroupFS
+		case v1alpha2.CGroupDriverSystemd:
+			edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.CgroupDriver = v1alpha2.CGroupDriverSystemd
+		case v1alpha2.CGroupDriverCGroupFS:
+			edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.CgroupDriver = v1alpha2.CGroupDriverCGroupFS
 		default:
 			return fmt.Errorf("unsupported CGroupDriver: %s", ku.CGroupDriver)
 		}
 	}
 
 	if ku.RemoteRuntimeEndpoint != "" {
-		edgeCoreConfig.Modules.Edged.RemoteRuntimeEndpoint = ku.RemoteRuntimeEndpoint
-		edgeCoreConfig.Modules.Edged.RemoteImageEndpoint = ku.RemoteRuntimeEndpoint
+		edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.ContainerRuntimeEndpoint = ku.RemoteRuntimeEndpoint
+		edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.ImageServiceEndpoint = ku.RemoteRuntimeEndpoint
 	}
 	if ku.Token != "" {
 		edgeCoreConfig.Modules.EdgeHub.Token = ku.Token
@@ -124,6 +120,21 @@ func (ku *KubeEdgeInstTool) createEdgeConfigFiles() error {
 	} else {
 		edgeCoreConfig.Modules.EdgeHub.HTTPServer = "https://" + cloudCoreIP + ":10002"
 	}
+
+	switch ku.HubProtocol {
+	case api.ProtocolTypeQuic:
+		edgeCoreConfig.Modules.EdgeHub.Quic.Enable = true
+		edgeCoreConfig.Modules.EdgeHub.WebSocket.Enable = false
+		edgeCoreConfig.Modules.EdgeHub.Quic.Server = ku.CloudCoreIP
+		edgeCoreConfig.Modules.EdgeHub.WebSocket.Server = net.JoinHostPort(cloudCoreIP, strconv.Itoa(constants.DefaultWebSocketPort))
+	case api.ProtocolTypeWS:
+		edgeCoreConfig.Modules.EdgeHub.Quic.Enable = false
+		edgeCoreConfig.Modules.EdgeHub.WebSocket.Enable = true
+		edgeCoreConfig.Modules.EdgeHub.Quic.Server = net.JoinHostPort(cloudCoreIP, strconv.Itoa(constants.DefaultQuicPort))
+		edgeCoreConfig.Modules.EdgeHub.WebSocket.Server = ku.CloudCoreIP
+	default:
+		return fmt.Errorf("unsupported hub of protocol: %s", ku.HubProtocol)
+	}
 	edgeCoreConfig.Modules.EdgeStream.TunnelServer = net.JoinHostPort(cloudCoreIP, strconv.Itoa(constants.DefaultTunnelPort))
 
 	if len(ku.Labels) >= 1 {
@@ -133,7 +144,7 @@ func (ku *KubeEdgeInstTool) createEdgeConfigFiles() error {
 			value := strings.Split(label, "=")[1]
 			labelsMap[key] = value
 		}
-		edgeCoreConfig.Modules.Edged.Labels = labelsMap
+		edgeCoreConfig.Modules.Edged.NodeLabels = labelsMap
 	}
 
 	if errs := validation.ValidateEdgeCoreConfiguration(edgeCoreConfig); len(errs) > 0 {
@@ -148,9 +159,5 @@ func (ku *KubeEdgeInstTool) TearDown() error {
 	ku.SetKubeEdgeVersion(ku.ToolVersion)
 
 	//Kill edge core process
-	if err := ku.KillKubeEdgeBinary(KubeEdgeBinaryName); err != nil {
-		return err
-	}
-
-	return nil
+	return ku.KillKubeEdgeBinary(KubeEdgeBinaryName)
 }

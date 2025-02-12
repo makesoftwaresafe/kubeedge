@@ -4,29 +4,29 @@ import (
 	"net/http"
 	"strings"
 
-	admissionv1beta1 "k8s.io/api/admission/v1beta1"
+	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
-	devicesv1alpha2 "github.com/kubeedge/kubeedge/pkg/apis/devices/v1alpha2"
+	devicesv1beta1 "github.com/kubeedge/api/apis/devices/v1beta1"
 )
 
-func admitDeviceModel(review admissionv1beta1.AdmissionReview) *admissionv1beta1.AdmissionResponse {
-	reviewResponse := admissionv1beta1.AdmissionResponse{}
+func admitDeviceModel(review admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
+	reviewResponse := admissionv1.AdmissionResponse{}
 	reviewResponse.Allowed = true
 	var msg string
 
 	switch review.Request.Operation {
-	case admissionv1beta1.Create, admissionv1beta1.Update:
+	case admissionv1.Create, admissionv1.Update:
 		raw := review.Request.Object.Raw
-		devicemodel := devicesv1alpha2.DeviceModel{}
+		devicemodel := devicesv1beta1.DeviceModel{}
 		deserializer := codecs.UniversalDeserializer()
 		if _, _, err := deserializer.Decode(raw, nil, &devicemodel); err != nil {
 			klog.Errorf("validation failed with error: %v", err)
 			return toAdmissionResponse(err)
 		}
 		msg = validateDeviceModel(&devicemodel, &reviewResponse)
-	case admissionv1beta1.Delete, admissionv1beta1.Connect:
+	case admissionv1.Delete, admissionv1.Connect:
 		//no rule defined for above operations, greenlight for all of above.
 		reviewResponse.Allowed = true
 	default:
@@ -40,15 +40,15 @@ func admitDeviceModel(review admissionv1beta1.AdmissionReview) *admissionv1beta1
 	return &reviewResponse
 }
 
-func validateDeviceModel(devicemodel *devicesv1alpha2.DeviceModel, response *admissionv1beta1.AdmissionResponse) string {
+func validateDeviceModel(devicemodel *devicesv1beta1.DeviceModel, response *admissionv1.AdmissionResponse) string {
 	//device properties must be either Int or String while additional properties is not banned.
 	var msg string
+	propertyNameMap := make(map[string]bool)
 	for _, property := range devicemodel.Spec.Properties {
-		if property.Type.String == nil && property.Type.Int == nil {
-			msg = "Either Int or String must be set"
-			response.Allowed = false
-		} else if property.Type.String != nil && property.Type.Int != nil {
-			msg = "Only one of [Int, String] could be set for properties"
+		if _, ok := propertyNameMap[property.Name]; !ok {
+			propertyNameMap[property.Name] = true
+		} else {
+			msg = "property names must be unique."
 			response.Allowed = false
 		}
 	}

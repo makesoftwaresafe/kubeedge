@@ -95,3 +95,19 @@ func DynamicControllerMessageLayer() MessageLayer {
 		ResponseModuleName: modules.CloudHubModuleName,
 	}
 }
+
+func TaskManagerMessageLayer() MessageLayer {
+	return &ContextMessageLayer{
+		SendModuleName:     modules.CloudHubModuleName,
+		ReceiveModuleName:  modules.TaskManagerModuleName,
+		ResponseModuleName: modules.CloudHubModuleName,
+	}
+}
+
+func PolicyControllerMessageLayer() MessageLayer {
+	return &ContextMessageLayer{
+		SendModuleName:     modules.CloudHubModuleName,
+		ReceiveModuleName:  modules.PolicyControllerModuleName,
+		ResponseModuleName: modules.CloudHubModuleName,
+	}
+}

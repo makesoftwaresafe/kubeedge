@@ -1,48 +1,155 @@
 package application
 
 import (
-	"context"
+	"errors"
+	"io"
+	"net/http"
+	"reflect"
+	"strings"
 	"testing"
-	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	apirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/api/authorization/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
+	fakerest "k8s.io/client-go/rest/fake"
+	clientgotesting "k8s.io/client-go/testing"
 
-	metaserverconfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/config"
+	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/config"
+	"github.com/kubeedge/kubeedge/pkg/metaserver"
 )
 
-func TestApplicationGC(t *testing.T) {
+func TestCenter_passThroughRequest(t *testing.T) {
+	failureResp := &http.Response{
+		Status:     "500 Internal Error",
+		StatusCode: http.StatusInternalServerError,
+	}
+	successResp := &http.Response{
+		Status:     "200 ok",
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("{version: 1.27}")),
+	}
+	getVersions := func(key, verb string) *fakerest.RESTClient {
+		if key == "/version" && verb == "get" {
+			return &fakerest.RESTClient{
+				Client: fakerest.CreateHTTPClient(func(request *http.Request) (*http.Response, error) {
+					return successResp, nil
+				}),
+				NegotiatedSerializer: scheme.Codecs.WithoutConversion(),
+			}
+		}
+		return &fakerest.RESTClient{
+			Client: fakerest.CreateHTTPClient(func(request *http.Request) (*http.Response, error) {
+				return failureResp, nil
+			}),
+			NegotiatedSerializer: scheme.Codecs.WithoutConversion(),
+		}
+	}
+
 	tests := []struct {
-		name string
+		name    string
+		app     *metaserver.Application
+		want    interface{}
+		wantErr bool
 	}{
 		{
-			"Test ApplicationGC Func",
+			name: "get version success",
+			app: &metaserver.Application{
+				Key:  "/version",
+				Verb: "get",
+			},
+			want:    []byte("{version: 1.27}"),
+			wantErr: false,
+		}, {
+			name: "pass through failed",
+			app: &metaserver.Application{
+				Key:  "/healthz",
+				Verb: "get",
+			},
+			want:    []byte{},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := Agent{nodeName: metaserverconfig.Config.NodeName}
-			requestInfo := &apirequest.RequestInfo{
-				IsResourceRequest: true,
-				Verb:              "GET",
-				Path:              "http://127.0.0.1:10550/api/v1/nodes",
-				APIPrefix:         "api",
-				APIGroup:          "",
-				APIVersion:        "v1",
-				Resource:          "nodes",
+			center := &Center{
+				kubeClient: &kubernetes.Clientset{
+					DiscoveryClient: discovery.NewDiscoveryClient(getVersions(tt.app.Key, string(tt.app.Verb))),
+				},
 			}
-			ctx := apirequest.WithRequestInfo(context.Background(), requestInfo)
+			got, err := center.passThroughRequest(tt.app)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("passThroughRequest() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("passThroughRequest() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
-			app := a.Generate(ctx, "get", metav1.GetOptions{}, nil)
-			app.countLock.Lock()
-			app.count = 0
-			app.countLock.Unlock()
-			// make sure that the last closing time is more than 5 minutes from now
-			app.timestamp = time.Unix(1469579899, 0)
-			a.GC()
-			_, ok := a.Applications.Load(app.Identifier())
-			if ok == true {
-				t.Errorf("Application delete failed")
+func TestCheckNodePermission(t *testing.T) {
+	originalEnableAuthorization := config.Config.EnableAuthorization
+	config.Config.EnableAuthorization = true
+	defer func() {
+		config.Config.EnableAuthorization = originalEnableAuthorization
+	}()
+
+	tests := []struct {
+		name    string
+		app     *metaserver.Application
+		allowed bool
+		err     error
+		wantErr bool
+	}{
+		{
+			name: "get version success",
+			app: &metaserver.Application{
+				Verb:        "get",
+				Key:         "/version",
+				Subresource: "",
+				Nodename:    "test-node",
+			},
+			allowed: true,
+			wantErr: false,
+		}, {
+			name: "get version success",
+			app: &metaserver.Application{
+				Verb:        "get",
+				Key:         "/version",
+				Subresource: "",
+				Nodename:    "test-node",
+			},
+			allowed: true,
+			err:     errors.New("permission denied"),
+			wantErr: true,
+		}, {
+			name: "get configmap failed",
+			app: &metaserver.Application{
+				Verb:        "get",
+				Key:         "/core/v1/configmaps/ns/test-cm",
+				Subresource: "",
+				Nodename:    "test-node",
+			},
+			allowed: false,
+			wantErr: true,
+		},
+	}
+
+	fakeClientSet := fake.NewSimpleClientset()
+	center := &Center{kubeClient: fakeClientSet}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClientSet.PrependReactor("create", "subjectaccessreviews", func(action clientgotesting.Action) (handled bool, ret runtime.Object, err error) {
+				return true, &v1.SubjectAccessReview{Status: v1.SubjectAccessReviewStatus{Allowed: tt.allowed}}, tt.err
+			})
+
+			err := center.checkNodePermission(tt.app)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("checkNodePermission() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

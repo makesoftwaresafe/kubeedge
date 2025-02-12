@@ -1,9 +1,7 @@
 package model
 
 import (
-
-	// Mapping value of json to struct member
-	_ "encoding/json"
+	_ "encoding/json" // Mapping value of json to struct member
 	"fmt"
 	"strings"
 
@@ -37,17 +35,15 @@ const (
 	OpKeepalive  = "keepalive"
 )
 
-// constants for message group
+// GpResource constants for message group
 const (
 	GpResource = "resource"
 )
 
 // constants for message source
 const (
-	SrcCloudHub         = "cloudhub"
-	SrcEdgeController   = "edgecontroller"
-	SrcDeviceController = "devicecontroller"
-	SrcManager          = "edgemgr"
+	SrcCloudHub = "cloudhub"
+	SrcManager  = "edgemgr"
 )
 
 // constants for identifier information for edge hub

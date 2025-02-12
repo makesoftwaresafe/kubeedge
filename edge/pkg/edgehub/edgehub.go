@@ -7,18 +7,18 @@ import (
 	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/certificate"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/clients"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/config"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	// register Task handler
+	_ "github.com/kubeedge/kubeedge/edge/pkg/edgehub/task"
 )
 
-var HasTLSTunnelCerts = make(chan bool, 1)
-
-//EdgeHub defines edgehub object structure
+// EdgeHub defines edgehub object structure
 type EdgeHub struct {
 	certManager   certificate.CertManager
 	chClient      clients.Adapter
@@ -30,7 +30,20 @@ type EdgeHub struct {
 
 var _ core.Module = (*EdgeHub)(nil)
 
+var certSync map[string]chan bool
+
+func GetCertSyncChannel() map[string]chan bool {
+	return certSync
+}
+
+func NewCertSyncChannel() map[string]chan bool {
+	certSync = make(map[string]chan bool, 1)
+	certSync[modules.EdgeStreamModuleName] = make(chan bool, 1)
+	return certSync
+}
+
 func newEdgeHub(enable bool) *EdgeHub {
+	NewCertSyncChannel()
 	return &EdgeHub{
 		enable:        enable,
 		reconnectChan: make(chan struct{}),
@@ -41,33 +54,34 @@ func newEdgeHub(enable bool) *EdgeHub {
 }
 
 // Register register edgehub
-func Register(eh *v1alpha1.EdgeHub, nodeName string) {
+func Register(eh *v1alpha2.EdgeHub, nodeName string) {
 	config.InitConfigure(eh, nodeName)
 	core.Register(newEdgeHub(eh.Enable))
 }
 
-//Name returns the name of EdgeHub module
+// Name returns the name of EdgeHub module
 func (eh *EdgeHub) Name() string {
 	return modules.EdgeHubModuleName
 }
 
-//Group returns EdgeHub group
+// Group returns EdgeHub group
 func (eh *EdgeHub) Group() string {
 	return modules.HubGroup
 }
 
-//Enable indicates whether this module is enabled
+// Enable indicates whether this module is enabled
 func (eh *EdgeHub) Enable() bool {
 	return eh.enable
 }
 
-//Start sets context and starts the controller
+// Start sets context and starts the controller
 func (eh *EdgeHub) Start() {
 	eh.certManager = certificate.NewCertManager(config.Config.EdgeHub, config.Config.NodeName)
 	eh.certManager.Start()
-
-	HasTLSTunnelCerts <- true
-	close(HasTLSTunnelCerts)
+	for _, v := range GetCertSyncChannel() {
+		v <- true
+		close(v)
+	}
 
 	go eh.ifRotationDone()
 

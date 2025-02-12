@@ -7,11 +7,11 @@ import (
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/kubeedge/common/types"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/util"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
 var (
@@ -62,7 +62,7 @@ func NewSubDiagnose(object Diagnose) *cobra.Command {
 	switch object.Use {
 	case common.ArgDiagnoseNode:
 		cmd.Flags().StringVarP(&do.Config, common.EdgecoreConfig, "c", do.Config,
-			fmt.Sprintf("Specify configuration file, defalut is %s", common.EdgecoreConfigPath))
+			fmt.Sprintf("Specify configuration file, default is %s", common.EdgecoreConfigPath))
 	case common.ArgDiagnosePod:
 		cmd.Flags().StringVarP(&do.Namespace, "namespace", "n", do.Namespace, "specify namespace")
 	case common.ArgDiagnoseInstall:
@@ -70,7 +70,6 @@ func NewSubDiagnose(object Diagnose) *cobra.Command {
 		cmd.Flags().StringVarP(&do.CheckOptions.Domain, "domain", "d", do.CheckOptions.Domain, "specify test domain")
 		cmd.Flags().StringVarP(&do.CheckOptions.IP, "ip", "i", do.CheckOptions.IP, "specify test ip")
 		cmd.Flags().StringVarP(&do.CheckOptions.CloudHubServer, "cloud-hub-server", "s", do.CheckOptions.CloudHubServer, "specify cloudhub server")
-		cmd.Flags().StringVarP(&do.CheckOptions.Runtime, "runtime", "r", do.CheckOptions.Runtime, "specify the runtime")
 	}
 	return cmd
 }
@@ -83,7 +82,6 @@ func NewDiagnoseOptions() *common.DiagnoseOptions {
 	do.CheckOptions = &common.CheckOptions{
 		IP:      "",
 		Timeout: 3,
-		Runtime: common.DefaultRuntime,
 	}
 	return do
 }
@@ -138,13 +136,8 @@ func DiagnoseNode(ops *common.DiagnoseOptions) error {
 		return fmt.Errorf("parse Edgecore config failed")
 	}
 
-	err = CheckRuntime(edgeconfig.Modules.Edged.RuntimeType)
-	if err != nil {
-		return err
-	}
-
 	// check datebase
-	dataSource := v1alpha1.DataBaseDataSource
+	dataSource := v1alpha2.DataBaseDataSource
 	if edgeconfig.DataBase.DataSource != "" {
 		dataSource = edgeconfig.DataBase.DataSource
 	}
@@ -173,13 +166,13 @@ func DiagnoseNode(ops *common.DiagnoseOptions) error {
 func DiagnosePod(ops *common.DiagnoseOptions, podName string) error {
 	ready := false
 	if ops.DBPath == "" {
-		ops.DBPath = v1alpha1.DataBaseDataSource
+		ops.DBPath = v1alpha2.DataBaseDataSource
 	}
-	err := InitDB(v1alpha1.DataBaseDriverName, v1alpha1.DataBaseAliasName, ops.DBPath)
+	err := InitDB(v1alpha2.DataBaseDriverName, v1alpha2.DataBaseAliasName, ops.DBPath)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %v ", err)
 	}
-	fmt.Printf("Database %s is exist \n", v1alpha1.DataBaseDataSource)
+	fmt.Printf("Database %s is exist \n", v1alpha2.DataBaseDataSource)
 	podStatus, err := QueryPodFromDatabase(ops.Namespace, podName)
 	if err != nil {
 		return err
@@ -222,7 +215,7 @@ func DiagnosePod(ops *common.DiagnoseOptions, podName string) error {
 	if ready {
 		fmt.Printf("Pod %s is Ready", podName)
 	} else {
-		return fmt.Errorf("Pod %s is not Ready", podName)
+		return fmt.Errorf("pod %s is not Ready", podName)
 	}
 
 	return nil
@@ -298,11 +291,6 @@ func DiagnoseInstall(ob *common.CheckOptions) error {
 	}
 
 	err = CheckPid()
-	if err != nil {
-		return err
-	}
-
-	err = CheckRuntime(ob.Runtime)
 	if err != nil {
 		return err
 	}

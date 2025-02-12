@@ -26,10 +26,9 @@ import (
 	"github.com/golang/mock/gomock"
 
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/edge/mocks/beego"
-	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtcontext"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dttype"
+	"github.com/kubeedge/kubeedge/pkg/testtools"
 )
 
 func TestGetRemoveList(t *testing.T) {
@@ -179,16 +178,8 @@ func TestDealMembershipUpdateInvalidContent(t *testing.T) {
 }
 
 func TestDealMembershipUpdateValidAddedDevice(t *testing.T) {
-	var ormerMock *beego.MockOrmer
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	ormerMock.EXPECT().Begin().Return(nil)
-	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), nil).Times(1)
-	ormerMock.EXPECT().Commit().Return(nil)
+	ormerMock, _ := testtools.InitOrmerMock(t)
+	ormerMock.EXPECT().DoTx(gomock.Any()).Return(nil).Times(1)
 
 	dtc := &dtcontext.DTContext{
 		DeviceList:  &sync.Map{},
@@ -301,8 +292,8 @@ func TestDealMembershipGetValid(t *testing.T) {
 		Content: content,
 	}
 	err := dealMembershipGet(dtc, "t", m)
-	if err != nil {
-		t.Errorf("expected nil, but got error: %v", err)
+	if !reflect.DeepEqual(err, errors.New("Not found chan to communicate")) {
+		t.Errorf("expected %v, but got error: %v", errors.New("Not found chan to communicate"), err)
 	}
 }
 
@@ -329,8 +320,8 @@ func TestDealMembershipGetInnerValid(t *testing.T) {
 	content, _ := json.Marshal(payload)
 
 	err := dealMembershipGetInner(dtc, content)
-	if err != nil {
-		t.Errorf("expected nil, but got error: %v", err)
+	if !reflect.DeepEqual(err, errors.New("Not found chan to communicate")) {
+		t.Errorf("expected %v, but got error: %v", errors.New("Not found chan to communicate"), err)
 	}
 }
 
@@ -343,8 +334,8 @@ func TestDealMembershipGetInnerInValid(t *testing.T) {
 	}
 
 	err := dealMembershipGetInner(dtc, []byte("invalid"))
-	if err != nil {
-		t.Errorf("expected nil, but got error: %v", err)
+	if !reflect.DeepEqual(err, errors.New("Not found chan to communicate")) {
+		t.Errorf("expected %v, but got error: %v", errors.New("Not found chan to communicate"), err)
 	}
 }
 

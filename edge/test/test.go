@@ -9,12 +9,12 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
 const (
@@ -24,7 +24,7 @@ const (
 )
 
 // TODO move this files into /edge/pkg/dbtest @kadisi
-func Register(t *v1alpha1.DBTest) {
+func Register(t *v1alpha2.DBTest) {
 	core.Register(&testManager{enable: t.Enable})
 }
 
@@ -39,7 +39,7 @@ func (tm *testManager) Name() string {
 }
 
 func (tm *testManager) Group() string {
-	//return core.MetaGroup
+	// return core.MetaGroup
 	return modules.MetaGroup
 }
 
@@ -47,7 +47,7 @@ func (tm *testManager) Enable() bool {
 	return tm.enable
 }
 
-//Function to get the pods from Edged
+// Function to get the pods from Edged
 func GetPodListFromEdged(w http.ResponseWriter) error {
 	var pods v1.PodList
 	var bytes io.Reader
@@ -87,7 +87,7 @@ func GetPodListFromEdged(w http.ResponseWriter) error {
 	return nil
 }
 
-//Function to handle Get/Add/Delete deployment list.
+// podHandler handles Get/Add/Delete deployment list.
 func (tm *testManager) podHandler(w http.ResponseWriter, req *http.Request) {
 	var operation string
 	var p v1.Pod
@@ -122,12 +122,12 @@ func (tm *testManager) podHandler(w http.ResponseWriter, req *http.Request) {
 			ns = p.Namespace
 		}
 		msgReq := message.BuildMsg("resource", string(p.UID), "edgecontroller", ns+"/pod/"+p.Name, operation, p)
-		beehiveContext.Send("metaManager", *msgReq)
+		beehiveContext.Send(modules.MetaManagerModuleName, *msgReq)
 		klog.Infof("send message to metaManager is %+v\n", msgReq)
 	}
 }
 
-//Function to handle device addition and removal from the edgenode
+// Function to handle device addition and removal from the edgenode
 func (tm *testManager) deviceHandler(w http.ResponseWriter, req *http.Request) {
 	var operation string
 	var Content interface{}
@@ -183,7 +183,7 @@ func (tm *testManager) secretHandler(w http.ResponseWriter, req *http.Request) {
 		}
 
 		msgReq := message.BuildMsg("edgehub", string(p.UID), "test", "fakeNamespace/secret/"+string(p.UID), operation, p)
-		beehiveContext.Send("metaManager", *msgReq)
+		beehiveContext.Send(modules.MetaManagerModuleName, *msgReq)
 		klog.Infof("send message to metaManager is %+v\n", msgReq)
 	}
 }
@@ -213,7 +213,7 @@ func (tm *testManager) configmapHandler(w http.ResponseWriter, req *http.Request
 		}
 
 		msgReq := message.BuildMsg("edgehub", string(p.UID), "test", "fakeNamespace/configmap/"+string(p.UID), operation, p)
-		beehiveContext.Send("metaManager", *msgReq)
+		beehiveContext.Send(modules.MetaManagerModuleName, *msgReq)
 		klog.Infof("send message to metaManager is %+v\n", msgReq)
 	}
 }

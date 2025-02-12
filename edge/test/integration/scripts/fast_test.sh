@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 debugflag="-test.v -ginkgo.v"
 compilemodule=$1
 runtest=$2
@@ -24,7 +23,7 @@ cd $(dirname $(dirname "${BASH_SOURCE[0]}"))
 
 #Pre-configurations required for running the suite.
 #Any new config addition required corresponding code changes.
-cat >config.json<<END
+cat >config.json <<END
 {
         "mqttEndpoint":"tcp://$MQTT_SERVER:1884",
         "testManager": "http://127.0.0.1:12345",
@@ -34,13 +33,33 @@ cat >config.json<<END
 }
 END
 
+GINKGO_EXIT_CODE=0
 if [[ $# -eq 0 ]]; then
-    #run testcase
-    export KUBEEDGE_ROOT=$KUBEEDGE_ROOT
-    ./appdeployment/appdeployment.test $debugflag 2>&1 | tee -a /tmp/testcase.log
-    ./device/device.test  $debugflag  2>&1 | tee -a /tmp/testcase.log
-    ./metaserver/metaserver.test $debugflag  2>&1 | tee -a /tmp/testcase.log
+  #run testcase
+  export KUBEEDGE_ROOT=$KUBEEDGE_ROOT
+  #./appdeployment/appdeployment.test $debugflag
+  #if [[ $? != 0 ]]; then
+  #  GINKGO_EXIT_CODE=1
+  #fi
+  ./device/device.test $debugflag
+  if [[ $? != 0 ]]; then
+    GINKGO_EXIT_CODE=1
+  fi
+  ./metaserver/metaserver.test $debugflag
+  if [[ $? != 0 ]]; then
+    GINKGO_EXIT_CODE=1
+  fi
 else
-    ./$compilemodule/$compilemodule.test $debugflag $runtest 2>&1 | tee -a /tmp/testcase.log
+  ./$compilemodule/$compilemodule.test $debugflag $runtest
+  if [[ $? != 0 ]]; then
+    GINKGO_EXIT_CODE=1
+  fi
 fi
 
+if [[ $GINKGO_EXIT_CODE != 0 ]]; then
+  echo "Integration suite has failures, Please check !!"
+  exit 1
+else
+  echo "Integration suite successfully passed all the tests !!"
+  exit 0
+fi
